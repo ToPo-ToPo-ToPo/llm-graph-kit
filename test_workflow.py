@@ -1,7 +1,7 @@
 
 # 依存ライブラリのインポート
 from mlx_augllm import MlxLLM
-import json
+import json, yaml
 import re
 
 # 自作ライブラリのインポート
@@ -92,7 +92,9 @@ class Agent:
 
         # 必要なデータを取得
         input = state["input"]
+        review_result = state.get("review_report", "")
         feedback = state.get("review_advice", "")
+        pre_manuscript = state.get("manuscript", "")
 
         # システムプロンプトの構築
         system_prompt = (
@@ -108,14 +110,17 @@ class Agent:
         )
         
         # フィードバックがある場合
-        if feedback:
+        if pre_manuscript:
             user_prompt = (
-                "レビューの内容をもとに、小説の「あらすじ」の修正版を作成してください。\n\n"
+                "前回作成したあらすじに対して、編集者から厳しいレビューが入りました。\n"
+                "指摘事項と評価スコアを反映し、**劇的に改善された修正版**を作成してください。\n\n"
                 "### 元の指示の内容\n"
-                f"{input}\n"
-                "\n"
-                "### レビュー内容\n"
-                f"{feedback}"
+                f"{input}\n\n"
+                "### 前回作成した「あらすじ」\n"
+                f"{pre_manuscript}\n\n"
+                f"{review_result}\n\n"  # 受け取った整形済みテキストをそのまま埋め込む
+                "### 編集者からの総評・修正指示\n"
+                f"{str(feedback)}"
             )
 
         # LLMで回答を作成
@@ -143,75 +148,79 @@ class Agent:
         retry_count = state.get("retry_count", 0)  # リトライの回数
 
         # 無限ループの回避用
-        if retry_count >= 2:
+        if retry_count >= 5:
             print(f"[Sub: Eval] Max retries ({retry_count}) reached. Approving result.")
-            return {"review_judgement": "OK", "review_advice": ""}
+            # 強制OKのダミーデータをYAML構造に合わせて返す
+            return {
+                "review_judgement": "OK", 
+                "review_advice": []
+            }
 
         # システムプロンプトの構築
         system_prompt = (
-            "あなたは、短編小説の「あらすじ」を専門的に評価するレビュアーです。\n"
-            "感想ではなく、基準に基づく評価を行ってください。\n\n"
-            "以下の評価項目について、**減点方式（原点方式）**で評価してください。\n\n"
-            "各項目は【10点満点】から開始し、問題点がある場合にのみ減点してください。\n"
-            "減点理由は簡潔かつ具体的に示してください。\n\n"
+            "あなたは、作家の卵を育てる**建設的で親切な編集者**です。\n"
+            "あらすじの完成度を高めるために、良い点は褒め、改善点は具体的にアドバイスしてください。\n\n"
+            "以下の評価項目について評価を行ってください。\n"
+            "「あらすじ」としての分かりやすさと、お題への適合性を最優先してください。\n"
+            "過度に厳密な科学考証や、過剰な独自性を求める必要はありません。\n\n"
+            "**なぜその点数なのか、評価理由（reason）を必ず「箇条書き」で具体的に記述してください。**\n\n"
             "---\n\n"
-            "### 評価項目（変更禁止）\n\n"
-            "1. 読者を惹きつける内容となっているか？\n"
-            "2. 内容はわかりやすいか？\n"
-            "3. 与えられた指示が反映された内容か？\n"
-            "4. 世の中に公開しても問題ないか？\n\n"
+            "### 評価項目\n\n"
+            "1. 読者を惹きつける内容か？ (attractiveness)\n"
+            "   - フックや盛り上がりがあるか\n"
+            "   - 売れそうな内容になっているか\n"
+            "2. 内容はわかりやすいか？ (clarity)\n"
+            "   - 起承転結が整理されているか\n"
+            "   - 専門用語や特別な用語を多用していないか\n"
+            "3. 指示への適合性 (instruction_alignment)\n"
+            "   - ユーザーの指示（お題）を無視していないか\n"
+            "4. 公開安全性 (public_safety)\n"
+            "   - 倫理的な問題点がないか\n\n"
             "---\n\n"
-            "### 評価ルール\n\n"
-            "- 明確な問題がない場合は減点しないでください\n"
-            "- 主観的な好みではなく、**構成・一貫性・不足・過剰・リスク**を基準に判断してください\n"
-            "- 8点以上: 良好\n"
-            "- 6〜7点: 軽微な改善余地あり\n"
-            "- 5点以下: 明確な問題あり\n\n"
+            "### 採点基準（標準）\n\n"
+            "- **8-10点**: 文句なし。素晴らしい。\n"
+            "- **6-7点**: 合格点。あらすじとして十分成立している。\n"
+            "- **5点以下**: 明確な矛盾や、指示無視、不適切な内容がある。\n\n"
             "---\n\n"
-            "### 総合判定ルール\n\n"
-            "- すべての項目が **7点以上** → \"final_judgement\": \"OK\"\n"
-            "- 1つでも **6点以下** がある → \"final_judgement\": \"NG\"\n\n"
+            "### 総合判定ルール（緩和版）\n\n"
+            "- すべての項目が **6点以上** → final_judgement: \"OK\"\n"
+            "- 1つでも **5点以下** がある → final_judgement: \"NG\"\n\n"
             "---\n\n"
             "### NGの場合のみ\n\n"
-            "- 「なぜ修正が必要か」を簡潔にまとめてください\n"
             "- 修正の方向性を**箇条書きで具体的に**提示してください\n\n"
             "---\n\n"
             "### 出力形式（厳守）\n\n"
-            "必ず以下のJSON形式のみで出力してください。\n"
-            "文章や見出し、装飾、解説文は一切含めないでください。\n\n"
-            "{\n"
-            "  \"scores\": {\n"
-            "    \"attractiveness\": {\n"
-            "      \"score\": 0,\n"
-            "      \"deductions\": [\n"
-            "        \"評価理由を必ず記入\"\n"
-            "      ]\n"
-            "    },\n"
-            "    \"clarity\": {\n"
-            "      \"score\": 0,\n"
-            "      \"deductions\": []\n"
-            "    },\n"
-            "    \"instruction_alignment\": {\n"
-            "      \"score\": 0,\n"
-            "      \"deductions\": []\n"
-            "    },\n"
-            "    \"public_safety\": {\n"
-            "      \"score\": 0,\n"
-            "      \"deductions\": []\n"
-            "    }\n"
-            "  },\n"
-            "  \"final_judgement\": \"OK または NG\",\n"
-            "  \"advice\": [\n"
-            "    \"NGの場合のみ記載。OKの場合は空配列\"\n"
-            "  ]\n"
-            "}\n"
+            "必ず以下の**YAML形式**のみで出力してください。\n"
+            "文章や解説文は一切含めず、データのみを出力してください。\n\n"
+            "scores:\n"
+            "  attractiveness:\n"
+            "    score: <0-10の整数>\n"
+            "    reason:\n"
+            "      - \"<評価理由>\"\n"
+            "  clarity:\n"
+            "    score: <0-10の整数>\n"
+            "    reason:\n"
+            "      - \"<評価理由>\"\n"
+            "  instruction_alignment:\n"
+            "    score: <0-10の整数>\n"
+            "    reason:\n"
+            "      - \"<評価理由>\"\n"
+            "  public_safety:\n"
+            "    score: <0-10の整数>\n"
+            "    reason:\n"
+            "      - \"<評価理由>\"\n"
+            "final_judgement: \"OK\" または \"NG\"\n"
+            "advice:\n"
+            "  - \"<NGの場合の修正指示1>\"\n"
+            "  - \"<NGの場合の修正指示2>\"\n"
+            "  - \"<OKの場合は空配列 [] >\"\n"
         )
 
         # ユーザープロンプトの構築
         user_prompt = (
-            "以下の小説の「あらすじ」についてレビューをしてください。\n\n"
+            "以下の小説の「あらすじ」について、編集者としてレビューをしてください。\n\n"
             "### 与えられた指示\n"
-            f"{input}"
+            f"{input}\n\n"
             "### 現状の小説の「あらすじ」\n"
             f"{manuscript}"
         )
@@ -221,29 +230,62 @@ class Agent:
         for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
             response += chunk
         
-        # 結果の出力
+        # 結果の出力 (YAMLとして表示)
         GraphLogger.log(title="レビュー結果:", content=response, style="response")
 
-        # レビュー結果のパース(JSONとしてパース)
+        # レビュー結果のパース(YAMLとしてパース)
         try:
-            # ```json ～ ``` を除去
-            cleaned_response = re.sub(r"^```json\s*|\s*```$", "", response)
-            # パース
-            review_json = json.loads(cleaned_response)
-        except json.JSONDecodeError as e:
-            # フェイルセーフ（再試行 or 強制NG）
-            review_json = {
+            cleaned_response = response.strip()
+            # マークダウンのコードブロック ```yaml ... ``` または ``` ... ``` を除去
+            if "```yaml" in cleaned_response:
+                cleaned_response = cleaned_response.split("```yaml")[1].split("```")[0].strip()
+            elif "```" in cleaned_response:
+                cleaned_response = cleaned_response.split("```")[1].split("```")[0].strip()
+            
+            # YAMLパース
+            review_data = yaml.safe_load(cleaned_response)
+            
+        except Exception as e:
+            print(f"[Error] YAML Parse failed: {e}")
+            # フェイルセーフ（再試行させるためにNGとする）
+            review_data = {
                 "scores": {},
                 "final_judgement": "NG",
-                "advice": ["レビュー結果をJSONとして解析できませんでした"]
+                "advice": ["レビュー結果をYAMLとして解析できませんでした。フォーマットを確認してください。"]
             }
+        
+        # ここで整形済みテキストを作成
+        scores = review_data.get("scores", {})
+        formatted_report = ""
 
-        # 次のノードへの引き継ぎ情報(構造化データとして渡す)
+        if scores:
+            report_lines = ["### 評価レポート"]
+            
+            for category, data in scores.items():
+                # dataの構造: {'score': 8, 'reason': ['理由1', '理由2']}
+                s_val = data.get('score', 0)
+                reasons = data.get('reason', [])
+                
+                # 行リストに追加
+                report_lines.append(f"- **{category}**: {s_val}/10点")
+                
+                if isinstance(reasons, list):
+                    for r in reasons:
+                        report_lines.append(f"  - {r}")
+                else:
+                    report_lines.append(f"  - {reasons}")
+            
+            # 最後に改行コードで結合
+            formatted_report = "\n".join(report_lines)
+        
+        # デバッグ用
+        #print(formatted_report)
+
+        # 次のノードへの引き継ぎ情報
         return {
-            "review": review_json,
-            "review_scores": review_json.get("scores"),
-            "review_judgement": review_json.get("final_judgement"),
-            "review_advice": review_json.get("advice", []),
+            "review_judgement": review_data.get("final_judgement"),
+            "review_report": formatted_report, 
+            "review_advice": review_data.get("advice", []),
             "retry_count": retry_count + 1
         }
     
