@@ -5,7 +5,7 @@ import json, yaml
 import re
 
 # 自作ライブラリのインポート
-from src.llm_graph import LLMGraph, NodeState, GraphLogger
+from src.llm_graph_kit import LLMGraph, NodeState, GraphLogger
 
 #-----------------------------------------------------------------------
 # エージェントクラス
