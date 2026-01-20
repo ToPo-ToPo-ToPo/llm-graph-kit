@@ -5,7 +5,7 @@ import json, yaml
 import re
 
 # 自作ライブラリのインポート
-from llm_graph.llm_graph import LLMGraph, State
+from llm_graph.llm_graph import LLMGraph, NodeState
 from llm_graph.graph_logger import GraphLogger
 
 #-----------------------------------------------------------------------
@@ -25,7 +25,7 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     # エージェントを実行 (メインエントリポイント)
     #---------------------------------------------------------------------------
-    def run(self, question: str) -> State:
+    def run(self, question: str) -> NodeState:
         """
         質問を受け取り、グラフを構築・可視化・実行して結果を返します。
         """
@@ -76,7 +76,7 @@ class NovelistAgent:
         # 条件付きエッジ
         workflow.add_conditional_edge(
             "check_result",  # 分岐元
-            "decision",      # Stateのこのキーの値を見る
+            "decision",      # NodeStateのこのキーの値を見る
             {
                 "retry": "create_manuscript", 
                 "complete": "create_book_blurb"
@@ -89,7 +89,7 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     # LLMで回答のドラフトを作成
     #---------------------------------------------------------------------------
-    def _create_manuscript(self, state: State) -> State:
+    def _create_manuscript(self, state: NodeState) -> NodeState:
 
         # ログの作成
         GraphLogger.print_phase_header("Create draft node", emoji="🟠")
@@ -141,7 +141,7 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     # LLMでレビューを実施（判定ロジックをPython側に移譲）
     #---------------------------------------------------------------------------
-    def _create_review(self, state: State) -> State:
+    def _create_review(self, state: NodeState) -> NodeState:
 
         # 実行中の表示
         GraphLogger.print_phase_header("Create review node", emoji="🟠")
@@ -305,7 +305,7 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     # チェックノード
     #---------------------------------------------------------------------------
-    def _check_result_node(self, state: State) -> State:
+    def _check_result_node(self, state: NodeState) -> NodeState:
         """
         レビュー結果を確認し、次のアクションを決定するノード。
         """
@@ -325,7 +325,7 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     # プロットを元に小説本文を執筆するノード
     #---------------------------------------------------------------------------
-    def _write_novel_body(self, state: State) -> State:
+    def _write_novel_body(self, state: NodeState) -> NodeState:
 
         #
         GraphLogger.print_phase_header("Write Final Novel", emoji="🟠")
@@ -374,7 +374,7 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     # 【変更】承認済みプロットから「本の裏表紙（Blurb）」を作成するノード
     #---------------------------------------------------------------------------
-    def _create_book_blurb(self, state: State) -> State:
+    def _create_book_blurb(self, state: NodeState) -> NodeState:
 
         GraphLogger.print_phase_header("Create Book Blurb", emoji="🟠")
 
@@ -387,14 +387,12 @@ class NovelistAgent:
         system_prompt = (
             "あなたは**純文学の小説家**です。\n"
             "### 執筆ルール（厳守）\n"
-            "- 渡されたプロットを元に、**「掌編小説（ショートストーリー）」**を執筆してください。\n"
-            "- 宣伝文句やあらすじ説明ではなく、**一つの独立した「物語」として読める文章**にしてください。\n"
-            "- セリフは使わず、状況描写のみとしてください。\n"
-            "- トーンは静謐で、情緒的な文体にしてください。"
+            "- 渡されたプロットを元に、**小説のあらすじ**を執筆してください。\n"
+            "- 出力はあらすじ部分のみとしてください。"
         )
 
         user_prompt = (
-            "以下のプロットを元に、魅力的なショートストーリーを書いてください。\n\n"
+            "以下のプロットを元に、魅力的な小説のあらすじを書いてください。\n\n"
             "### 物語のプロット（全容）\n"
             f"{approved_plot}\n\n"
             "### 編集者からの執筆アドバイス\n"

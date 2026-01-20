@@ -1,7 +1,7 @@
 from typing import Dict, Any, Callable, Union, Tuple
 
 # ステートの型定義
-State = Dict[str, Any]
+NodeState = Dict[str, Any]
 
 class LLMGraph:
     """
@@ -14,18 +14,18 @@ class LLMGraph:
 
     def __init__(self):
         # ノード名 -> 関数
-        self.nodes: Dict[str, Callable[[State], State]] = {}
+        self.nodes: Dict[str, Callable[[NodeState], NodeState]] = {}
         # ノード名 -> 次のノード名 または (条件, マッピング辞書)
         # 条件は Callable(関数) または str(ステートのキー)
         self.edges: Dict[str, Union[str, Tuple[Union[Callable, str], Dict[str, str]]]] = {} 
         self.entry_point: str = ""
         self.subgraphs: Dict[str, 'LLMGraph'] = {}
 
-    def add_node(self, name: str, func: Callable[[State], State]):
+    def add_node(self, name: str, func: Callable[[NodeState], NodeState]):
         """ノードを登録します"""
         self.nodes[name] = func
     
-    def add_node_with_subgraph(self, name: str, func: Callable[[State], State], subgraph: 'LLMGraph'):
+    def add_node_with_subgraph(self, name: str, func: Callable[[NodeState], NodeState], subgraph: 'LLMGraph'):
         """サブグラフ構造を持つノードを登録します"""
         self.nodes[name] = func
         self.subgraphs[name] = subgraph
@@ -40,7 +40,7 @@ class LLMGraph:
     def add_conditional_edge(
         self, 
         from_node: str, 
-        condition: Union[Callable[[State], str], str], 
+        condition: Union[Callable[[NodeState], str], str], 
         path_map: Dict[str, str]
     ):
         """
@@ -49,8 +49,8 @@ class LLMGraph:
         Args:
             from_node: 分岐元のノード名
             condition: 
-                - 関数: Stateを受け取りシグナル(文字列)を返す
-                - 文字列: シグナルが格納されているStateのキー名
+                - 関数: NodeStateを受け取りシグナル(文字列)を返す
+                - 文字列: シグナルが格納されているNodeStateのキー名
             path_map: { "シグナル": "行き先のノード名" } の辞書
         """
         self.edges[from_node] = (condition, path_map)
@@ -59,7 +59,7 @@ class LLMGraph:
         """可視化用にサブグラフを登録します"""
         self.subgraphs[node_name] = subgraph
 
-    def run(self, initial_state: State) -> State:
+    def run(self, initial_state: NodeState) -> NodeState:
         """グラフを実行します"""
         if not self.entry_point:
             raise ValueError("Entry point not set. Use add_edge(Graph.START, 'node_name').")
@@ -93,7 +93,7 @@ class LLMGraph:
                 elif isinstance(condition, str):
                     signal = state.get(condition)
                     if signal is None:
-                         raise ValueError(f"State key '{condition}' not found for routing from '{current_node_name}'")
+                         raise ValueError(f"NodeState key '{condition}' not found for routing from '{current_node_name}'")
                 else:
                     raise ValueError("Invalid condition type in edge")
                 
