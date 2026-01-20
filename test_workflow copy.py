@@ -64,21 +64,19 @@ class Agent:
         #------------------------------------------------------------
         workflow.add_node(name="create_manuscript", func=self._create_manuscript)
         workflow.add_node(name="review", func=self._create_review)
-        workflow.add_node(name="check_result", func=self._check_result_node)
 
         #------------------------------------------------------------
         # エッジ定義
         #------------------------------------------------------------
         workflow.add_edge(LLMGraph.START, "create_manuscript")
         workflow.add_edge("create_manuscript", "review")
-        workflow.add_edge("review", "check_result")
         # 条件付きエッジ
         workflow.add_conditional_edge(
-            "check_result",  # 分岐元
-            "decision",      # Stateのこのキーの値を見る
+            "review",         # 分岐元
+            self._loop_check, # ルーター関数
             {
-                "retry": "create_manuscript", 
-                "complete": LLMGraph.END
+                "retry": "create_manuscript",  # NGなら最初に戻る
+                "complete": LLMGraph.END       # OKなら終了
             }
         )
 
@@ -139,13 +137,10 @@ class Agent:
     #---------------------------------------------------------------------------
     # LLMでレビューを実施
     #---------------------------------------------------------------------------
-    #---------------------------------------------------------------------------
-    # LLMでレビューを実施（判定ロジックをPython側に移譲）
-    #---------------------------------------------------------------------------
     def _create_review(self, state: State) -> State:
 
         # 実行中の表示
-        GraphLogger.log(style="header", content="Create review node", title="Phase")
+        GraphLogger.print_phase_header("Create review node", emoji="🟠")
 
         # 必要なデータを取得
         input = state["input"]                     # 元のお題
@@ -155,14 +150,13 @@ class Agent:
         # 無限ループの回避用
         if retry_count >= 5:
             print(f"[Sub: Eval] Max retries ({retry_count}) reached. Approving result.")
+            # 強制OKのダミーデータをYAML構造に合わせて返す
             return {
                 "review_judgement": "OK", 
-                "review_advice": [],
-                "review_report": "最大リトライ回数に達したため、現在の原稿を採用します。"
+                "review_advice": []
             }
 
         # システムプロンプトの構築
-        # ★変更点1: 「判定ルール」と「final_judgement出力」を削除し、純粋な採点に特化
         system_prompt = (
             "あなたは、作家の卵を育てる**建設的で親切な編集者**です。\n"
             "あらすじの完成度を高めるために、良い点は褒め、改善点は具体的にアドバイスしてください。\n\n"
@@ -183,10 +177,17 @@ class Agent:
             "4. 公開安全性 (public_safety)\n"
             "   - 倫理的な問題点がないか\n\n"
             "---\n\n"
-            "### 採点基準（目安）\n\n"
+            "### 採点基準（標準）\n\n"
             "- **8-10点**: 文句なし。素晴らしい。\n"
-            "- **6-7点**: 合格点。ただし、いくつか改善が必要。\n"
+            "- **6-7点**: 合格点。あらすじとして十分成立している。\n"
             "- **5点以下**: 明確な矛盾や、指示無視、不適切な内容がある。\n\n"
+            "---\n\n"
+            "### 総合判定ルール（緩和版）\n\n"
+            "- すべての項目が **6点以上** → final_judgement: \"OK\"\n"
+            "- 1つでも **5点以下** がある → final_judgement: \"NG\"\n\n"
+            "---\n\n"
+            "### NGの場合のみ\n\n"
+            "- 修正の方向性を**箇条書きで具体的に**提示してください\n\n"
             "---\n\n"
             "### 出力形式（厳守）\n\n"
             "必ず以下の**YAML形式**のみで出力してください。\n"
@@ -208,15 +209,16 @@ class Agent:
             "    score: <0-10の整数>\n"
             "    reason:\n"
             "      - \"<評価理由>\"\n"
+            "final_judgement: \"OK\" または \"NG\"\n"
             "advice:\n"
-            "  - \"<点数が低い項目の改善指示1>\"\n"
-            "  - \"<点数が低い項目の改善指示2>\"\n"
-            "  - \"<特になければ空配列 [] >\"\n"
+            "  - \"<NGの場合の修正指示1>\"\n"
+            "  - \"<NGの場合の修正指示2>\"\n"
+            "  - \"<OKの場合は空配列 [] >\"\n"
         )
 
         # ユーザープロンプトの構築
         user_prompt = (
-            "以下の小説の「あらすじ」について、編集者として厳しくレビューをしてください。\n\n"
+            "以下の小説の「あらすじ」について、編集者としてレビューをしてください。\n\n"
             "### 与えられた指示\n"
             f"{input}\n\n"
             "### 現状の小説の「あらすじ」\n"
@@ -234,86 +236,71 @@ class Agent:
         # レビュー結果のパース(YAMLとしてパース)
         try:
             cleaned_response = response.strip()
+            # マークダウンのコードブロック ```yaml ... ``` または ``` ... ``` を除去
             if "```yaml" in cleaned_response:
                 cleaned_response = cleaned_response.split("```yaml")[1].split("```")[0].strip()
             elif "```" in cleaned_response:
                 cleaned_response = cleaned_response.split("```")[1].split("```")[0].strip()
             
+            # YAMLパース
             review_data = yaml.safe_load(cleaned_response)
+            
         except Exception as e:
             print(f"[Error] YAML Parse failed: {e}")
+            # フェイルセーフ（再試行させるためにNGとする）
             review_data = {
                 "scores": {},
-                "advice": ["レビュー解析エラー"]
+                "final_judgement": "NG",
+                "advice": ["レビュー結果をYAMLとして解析できませんでした。フォーマットを確認してください。"]
             }
         
-        # 整形済みテキストの作成 と ★機械的な判定ロジック
+        # ここで整形済みテキストを作成
         scores = review_data.get("scores", {})
         formatted_report = ""
-        
-        # 判定用変数の設定
-        # 全ての項目が pass_threshold(7点) 以上なら OK とする
-        final_judgement = "OK"
-        pass_threshold = 7
-        
+
         if scores:
             report_lines = ["### 評価レポート"]
             
-            # 点数の取得
             for category, data in scores.items():
-
-                # 念のためint化
-                s_val = int(data.get('score', 0)) 
+                # dataの構造: {'score': 8, 'reason': ['理由1', '理由2']}
+                s_val = data.get('score', 0)
                 reasons = data.get('reason', [])
                 
-                # 点数チェック
-                if s_val < pass_threshold:
-                    final_judgement = "NG"
-
-                # レポート作成
+                # 行リストに追加
                 report_lines.append(f"- **{category}**: {s_val}/10点")
+                
                 if isinstance(reasons, list):
                     for r in reasons:
                         report_lines.append(f"  - {r}")
                 else:
                     report_lines.append(f"  - {reasons}")
             
+            # 最後に改行コードで結合
             formatted_report = "\n".join(report_lines)
-        else:
-            # スコアが空の場合はNG
-            final_judgement = "NG"
-            formatted_report = "評価データの取得に失敗しました。"
-
-        # ログに判定結果を表示
-        GraphLogger.log(style="info", content=f"機械判定結果: {final_judgement} (閾値: {pass_threshold}点)", title="System Judgement")
+        
+        # デバッグ用
+        #print(formatted_report)
 
         # 次のノードへの引き継ぎ情報
         return {
-            "review_judgement": final_judgement, # 判定結果
-            "review_report": formatted_report,  # 評価結果
-            "review_advice": review_data.get("advice", []),  # 総合的なアドバイス
+            "review_judgement": review_data.get("final_judgement"),
+            "review_report": formatted_report, 
+            "review_advice": review_data.get("advice", []),
             "retry_count": retry_count + 1
         }
     
     #---------------------------------------------------------------------------
     # チェックノード
     #---------------------------------------------------------------------------
-    def _check_result_node(self, state: State) -> State:
-        """
-        レビュー結果を確認し、次のアクションを決定するノード。
-        """
-        review_judgement = state.get("review_judgement", "NG")
+    def _loop_check(self, state: State) -> str:
+
+        # 作業に必要な情報を取得
+        status = state.get("review_judgement", "NG")
         
-        # 判定ロジック (ここではシンプルに判定結果をそのまま使う例)
-        if review_judgement == "OK":
-            decision = "complete"
-        else:
-            decision = "retry"
-        
-        print(f"[Check Node] Judgement: {review_judgement} -> Decision: {decision}")
-        
-        # 決定内容をステートに保存
-        return {"decision": decision}
+        # 作業を継続するかの判断
+        if status == "NG":
+            return "retry"    # NGなら元に戻る
+        return "complete"     # OKなら終了(END)へ
 
 #-----------------------------------------------------------------------
 # メインプログラム
