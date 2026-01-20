@@ -124,7 +124,7 @@ class LLMGraph:
     # 可視化 (Mermaid) [改良版]
     # ==========================================================================
     def get_graph_mermaid(self) -> str:
-        lines = ["graph TB"]
+        lines = ["graph TD"]
         
         # スタイル定義
         lines.append("  %% Styles")
@@ -164,7 +164,7 @@ class LLMGraph:
                     else:
                         label = f"{{{condition}}}" # ステートのキー名を表示
                     
-                    lines.append(f"    {from_id} -.-> {router_id}{label}:::routerClass")
+                    lines.append(f"    {from_id} --> {router_id}{label}:::routerClass")
                     
                     for signal, to_node in path_map.items():
                         to_id = f"{prefix}{to_node}"
@@ -174,19 +174,23 @@ class LLMGraph:
                     to_id = f"{prefix}{edge_data}"
                     lines.append(f"    {from_id} --> {to_id}")
 
-        # サブグラフ描画
-        for node_name, sub_graph in self.subgraphs.items():
-            cluster_id = f"Sub_{node_name}"
-            lines.append(f"  subgraph {cluster_id} [\"{node_name}\"]")
-            lines.append("    direction TB")
-            lines.append(f"    style {cluster_id} fill:#fffde7,stroke:#fbc02d,stroke-width:2px")
-            render_content(sub_graph, prefix=f"{node_name}_", is_subgraph=True)
+        if self.subgraphs:
+            # サブグラフ描画
+            for node_name, sub_graph in self.subgraphs.items():
+                cluster_id = f"Sub_{node_name}"
+                lines.append(f"  subgraph {cluster_id} [\"{node_name}\"]")
+                lines.append("    direction TD")
+                lines.append(f"    style {cluster_id} fill:#fffde7,stroke:#fbc02d,stroke-width:2px")
+                render_content(sub_graph, prefix=f"{node_name}_", is_subgraph=True)
+                lines.append("  end")
+
+            # メイングラフ描画
+            lines.append("  subgraph Main [Main Workflow]")
+            lines.append("    style Main fill:none,stroke:none")
+            render_content(self, prefix="", is_subgraph=False)
             lines.append("  end")
-
-        # メイングラフ描画
-        lines.append("  subgraph Main [Main Workflow]")
-        lines.append("    style Main fill:none,stroke:none")
-        render_content(self, prefix="", is_subgraph=False)
-        lines.append("  end")
-
+        
+        else:
+            render_content(self, prefix="", is_subgraph=False)
+        
         return "\n".join(lines)
