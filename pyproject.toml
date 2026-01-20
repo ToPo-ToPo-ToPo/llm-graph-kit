@@ -6,6 +6,16 @@ readme = "README.md"
 requires-python = ">=3.13.9"
 dependencies = [
     "mlx-augllm>=1.5",
-    "setuptools>=80.9.0",
-    "wheel>=0.45.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/ToPo-ToPo-ToPo/llm_graph"
+
+[build-system]
+requires = ["uv_build >= 0.9.21"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "build>=1.4.0",
 ]

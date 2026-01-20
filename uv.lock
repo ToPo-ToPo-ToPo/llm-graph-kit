@@ -142,6 +142,20 @@ wheels = [
 ]
 
 [[package]]
+name = "build"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "os_name == 'nt'" },
+    { name = "packaging" },
+    { name = "pyproject-hooks" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/42/18/94eaffda7b329535d91f00fe605ab1f1e5cd68b2074d03f255c7d250687d/build-1.4.0.tar.gz", hash = "sha256:f1b91b925aa322be454f8330c6fb48b465da993d1e7e7e6fa35027ec49f3c936", size = 50054, upload-time = "2026-01-08T16:41:47.696Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/0d/84a4380f930db0010168e0aa7b7a8fed9ba1835a8fbb1472bc6d0201d529/build-1.4.0-py3-none-any.whl", hash = "sha256:6a07c1b8eb6f2b311b96fcbdbce5dab5fe637ffda0fd83c9cac622e927501596", size = 24141, upload-time = "2026-01-08T16:41:46.453Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -516,19 +530,21 @@ wheels = [
 [[package]]
 name = "llm-graph"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "mlx-augllm" },
-    { name = "setuptools" },
-    { name = "wheel" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "build" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "mlx-augllm", specifier = ">=1.5" },
-    { name = "setuptools", specifier = ">=80.9.0" },
-    { name = "wheel", specifier = ">=0.45.1" },
-]
+requires-dist = [{ name = "mlx-augllm", specifier = ">=1.5" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "build", specifier = ">=1.4.0" }]
 
 [[package]]
 name = "markupsafe"
@@ -622,7 +638,7 @@ wheels = [
 
 [[package]]
 name = "mlx-lm"
-version = "0.30.2"
+version = "0.30.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
@@ -633,9 +649,9 @@ dependencies = [
     { name = "sentencepiece" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/c2/8c90a0152b948b2915022d00c8381b2e6942cd2d1458bdfcde8e4941ade5/mlx_lm-0.30.2.tar.gz", hash = "sha256:af43a0ec416437bd5835a06e0b2654e2668e7b51fdf0e7a4f1ae47bb8be40b0b", size = 252081, upload-time = "2026-01-06T02:33:04.91Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/2a/0295dd3df39efa382f3645ca526693ce7b7ce049d231e1398548eac9734d/mlx_lm-0.30.4.tar.gz", hash = "sha256:e7776c49e6fdcc497bff90b61182024af4bb0d76b555e129716ad39bab322bac", size = 260024, upload-time = "2026-01-19T16:14:20.364Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/23/96068585f05388bb0df17cd4e25aec651eecadcf2811876534970d73029c/mlx_lm-0.30.2-py3-none-any.whl", hash = "sha256:f0cec69b859698f07c840e06d6462a1ddafaaf4f701fc4d61c707acde1484971", size = 351425, upload-time = "2026-01-06T02:33:03.208Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/e0/6a58531e408620b7fcc6e62fb61f0c32f6cab530cafb54ca233114784698/mlx_lm-0.30.4-py3-none-any.whl", hash = "sha256:b5a7f1a545fdcde63666edc13815f3eecfd7492fd065d31484c30f61b4e1cf83", size = 362986, upload-time = "2026-01-19T16:14:18.946Z" },
 ]
 
 [[package]]
@@ -991,11 +1007,11 @@ wheels = [
 
 [[package]]
 name = "packaging"
-version = "26.0rc3"
+version = "25.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d3/61/9014e950c7c0c06f6df84e4acd2794cfb8f1052b859cc03f5d23c3b75561/packaging-26.0rc3.tar.gz", hash = "sha256:4864f12a44c5447552820887745f0cba7babea53356b52c93b4547e56128f168", size = 142715, upload-time = "2026-01-15T23:16:38.679Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/d4/1fc4078c65507b51b96ca8f8c3ba19e6a61c8253c72794544580a7b6c24d/packaging-25.0.tar.gz", hash = "sha256:d443872c98d677bf60f6a1f2f8c1cb748e8fe762d2bf9d3148b5599295b0fc4f", size = 165727, upload-time = "2025-04-19T11:48:59.673Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/9d/57d703323d41548e014e5e33191cdf117e690f48889809cf4e07d09238e2/packaging-26.0rc3-py3-none-any.whl", hash = "sha256:7b933851b1b13c75261dd365feb7ca91db8446fa35418b648ff8b79cabcd762d", size = 74119, upload-time = "2026-01-15T23:16:37.31Z" },
+    { url = "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl", hash = "sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484", size = 66469, upload-time = "2025-04-19T11:48:57.875Z" },
 ]
 
 [[package]]
@@ -1295,6 +1311,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5c/96/5fb7d8c3c17bc8c62fdb031c47d77a1af698f1d7a406b0f79aaa1338f9ad/pydantic_core-2.41.5-cp314-cp314t-win32.whl", hash = "sha256:b4ececa40ac28afa90871c2cc2b9ffd2ff0bf749380fbdf57d165fd23da353aa", size = 1988906, upload-time = "2025-11-04T13:41:56.606Z" },
     { url = "https://files.pythonhosted.org/packages/22/ed/182129d83032702912c2e2d8bbe33c036f342cc735737064668585dac28f/pydantic_core-2.41.5-cp314-cp314t-win_amd64.whl", hash = "sha256:80aa89cad80b32a912a65332f64a4450ed00966111b6615ca6816153d3585a8c", size = 1981607, upload-time = "2025-11-04T13:41:58.889Z" },
     { url = "https://files.pythonhosted.org/packages/9f/ed/068e41660b832bb0b1aa5b58011dea2a3fe0ba7861ff38c4d4904c1c1a99/pydantic_core-2.41.5-cp314-cp314t-win_arm64.whl", hash = "sha256:35b44f37a3199f771c3eaa53051bc8a70cd7b54f333531c59e29fd4db5d15008", size = 1974769, upload-time = "2025-11-04T13:42:01.186Z" },
+]
+
+[[package]]
+name = "pyproject-hooks"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/82/28175b2414effca1cdac8dc99f76d660e7a4fb0ceefa4b4ab8f5f6742925/pyproject_hooks-1.2.0.tar.gz", hash = "sha256:1e859bd5c40fae9448642dd871adf459e5e2084186e8d2c2a79a824c970da1f8", size = 19228, upload-time = "2024-09-29T09:24:13.293Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/24/12818598c362d7f300f18e74db45963dbcb85150324092410c8b49405e42/pyproject_hooks-1.2.0-py3-none-any.whl", hash = "sha256:9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913", size = 10216, upload-time = "2024-09-29T09:24:11.978Z" },
 ]
 
 [[package]]
@@ -1774,15 +1799,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c3/d1/8f3c683c9561a4e6689dd3b1d345c815f10f86acd044ee1fb9a4dcd0b8c5/uvicorn-0.40.0.tar.gz", hash = "sha256:839676675e87e73694518b5574fd0f24c9d97b46bea16df7b8c05ea1a51071ea", size = 81761, upload-time = "2025-12-21T14:16:22.45Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3d/d8/2083a1daa7439a66f3a48589a57d576aa117726762618f6bb09fe3798796/uvicorn-0.40.0-py3-none-any.whl", hash = "sha256:c6c8f55bc8bf13eb6fa9ff87ad62308bbbc33d0b67f84293151efe87e0d5f2ee", size = 68502, upload-time = "2025-12-21T14:16:21.041Z" },
-]
-
-[[package]]
-name = "wheel"
-version = "0.45.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8a/98/2d9906746cdc6a6ef809ae6338005b3f21bb568bea3165cfc6a243fdc25c/wheel-0.45.1.tar.gz", hash = "sha256:661e1abd9198507b1409a20c02106d9670b2576e916d58f520316666abca6729", size = 107545, upload-time = "2024-11-23T00:18:23.513Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/2c/87f3254fd8ffd29e4c02732eee68a83a1d3c346ae39bc6822dcbcb697f2b/wheel-0.45.1-py3-none-any.whl", hash = "sha256:708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248", size = 72494, upload-time = "2024-11-23T00:18:21.207Z" },
 ]
 
 [[package]]
