@@ -255,9 +255,25 @@ class LLMGraph:
                 
                 # 並列エッジ
                 if isinstance(edge_data, list):
+                    # 並列ノードへのエッジを描画
                     for to_node in edge_data:
                         to_id = f"{prefix}{to_node}"
                         lines.append(f"    {from_id} -.parallel.-> {to_id}")
+                    
+                    # 並列ノードから合流ノードへのエッジを追加
+                    # この from_node に対応する合流ノードを探す
+                    merge_node = None
+                    for m_node, (branch_from, _) in graph_obj.merge_nodes.items():
+                        if branch_from == from_node:
+                            merge_node = m_node
+                            break
+                    
+                    if merge_node:
+                        merge_id = f"{prefix}{merge_node}"
+                        # 各並列ノードから合流ノードへの点線エッジ
+                        for to_node in edge_data:
+                            to_id = f"{prefix}{to_node}"
+                            lines.append(f"    {to_id} -.->|merge| {merge_id}")
                 
                 # 条件付きエッジ
                 elif isinstance(edge_data, tuple):
