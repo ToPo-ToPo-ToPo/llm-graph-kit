@@ -1,4 +1,4 @@
-from typing import Dict, Any, Callable, Union, Tuple, List
+from typing import Dict, Any, Callable, Union, Tuple, List, Set
 import copy
 
 # ステートの型定義
@@ -6,39 +6,41 @@ NodeState = Dict[str, Any]
 
 class LLMGraph:
     """
-    ノードとエッジで構成されるステートマシンエンジン。
-    Router関数だけでなく、ステートの値を直接参照するルーティングに対応。
-    並列分岐・合流機能を追加しました。
+    LangGraphスタイル: シンプルなノードとエッジでグラフを構築
+    並列分岐は自動検出され、マージノードで結果が統合される
     """
-    # 定数定義
     START = "__START__"
     END = "__END__"
 
     def __init__(self):
-        # ノード名 -> 関数
         self.nodes: Dict[str, Callable[[NodeState], NodeState]] = {}
-        # ノード名 -> 次のノード名 または (条件, マッピング辞書) または List[str](並列分岐)
-        self.edges: Dict[str, Union[str, Tuple[Union[Callable, str], Dict[str, str]], List[str]]] = {} 
+        # from_node -> List[to_node] の形式でエッジを管理
+        self.edges: Dict[str, List[str]] = {}
+        # 条件付きエッジ: from_node -> (condition, path_map)
+        self.conditional_edges: Dict[str, Tuple[Union[Callable, str], Dict[str, str]]] = {}
         self.entry_point: str = ""
         self.subgraphs: Dict[str, 'LLMGraph'] = {}
-        # 合流ノード情報: {合流ノード名: (分岐元ノード名, 結果統合関数)}
-        self.merge_nodes: Dict[str, Tuple[str, Callable[[List[NodeState]], NodeState]]] = {}
 
     def add_node(self, name: str, func: Callable[[NodeState], NodeState]):
-        """ノードを登録します"""
+        """ノードを登録"""
         self.nodes[name] = func
     
-    def add_node_with_subgraph(self, name: str, func: Callable[[NodeState], NodeState], subgraph: 'LLMGraph'):
-        """サブグラフ構造を持つノードを登録します"""
-        self.nodes[name] = func
-        self.subgraphs[name] = subgraph
-
     def add_edge(self, from_node: str, to_node: str):
-        """固定ルートを定義します"""
+        """
+        エッジを追加（複数のエッジを同じfrom_nodeから追加可能）
+        
+        Args:
+            from_node: 開始ノード（STARTも使用可能）
+            to_node: 終了ノード（ENDも使用可能）
+        """
         if from_node == self.START:
             self.entry_point = to_node
             return
-        self.edges[from_node] = to_node
+        
+        if from_node not in self.edges:
+            self.edges[from_node] = []
+        
+        self.edges[from_node].append(to_node)
 
     def add_conditional_edge(
         self, 
@@ -46,233 +48,132 @@ class LLMGraph:
         condition: Union[Callable[[NodeState], str], str], 
         path_map: Dict[str, str]
     ):
-        """
-        条件分岐ルートを定義します。
-        
-        Args:
-            from_node: 分岐元のノード名
-            condition: 
-                - 関数: NodeStateを受け取りシグナル(文字列)を返す
-                - 文字列: シグナルが格納されているNodeStateのキー名
-            path_map: { "シグナル": "行き先のノード名" } の辞書
-        """
-        self.edges[from_node] = (condition, path_map)
+        """条件分岐ルートを定義"""
+        self.conditional_edges[from_node] = (condition, path_map)
 
-    def add_parallel_edges(
-        self,
-        from_node: str,
-        to_nodes: List[str],
-        merge_node: str,
-        merge_func: Callable[[List[NodeState]], NodeState] = None
-    ):
+    def _detect_merge_nodes(self) -> Dict[str, List[str]]:
         """
-        並列分岐を定義します。
+        グラフ構造から自動的にマージノードを検出
         
-        Args:
-            from_node: 分岐元のノード名
-            to_nodes: 並列実行するノード名のリスト
-            merge_node: 結果を統合する合流ノード名（自動的にノードとして登録されます）
-            merge_func: 複数の結果を統合する関数 (デフォルトは結果を配列に格納)
+        Returns:
+            {マージノード名: [入力ノードのリスト]}
         """
-        self.edges[from_node] = to_nodes
+        # 各ノードへの入力エッジをカウント
+        incoming_edges: Dict[str, List[str]] = {}
         
-        # デフォルトのマージ関数: 各結果を配列に格納
-        if merge_func is None:
-            def default_merge(states: List[NodeState]) -> NodeState:
-                return {"parallel_results": states}
-            merge_func = default_merge
+        for from_node, to_nodes in self.edges.items():
+            for to_node in to_nodes:
+                if to_node not in incoming_edges:
+                    incoming_edges[to_node] = []
+                incoming_edges[to_node].append(from_node)
         
-        # 合流ノード情報を登録（ノード関数は不要）
-        self.merge_nodes[merge_node] = (from_node, merge_func)
+        # 複数の入力を持つノード = マージノード
+        merge_nodes = {}
+        for node, inputs in incoming_edges.items():
+            if len(inputs) > 1:
+                merge_nodes[node] = inputs
         
-        # 合流ノードを自動的にノードとして登録（ダミー関数）
-        if merge_node not in self.nodes:
-            def merge_placeholder(state: NodeState) -> NodeState:
-                # マージ処理は run() 内で実行されるため、ここでは何もしない
-                return {}
-            self.nodes[merge_node] = merge_placeholder
+        return merge_nodes
 
-    def add_subgraph(self, node_name: str, subgraph: 'LLMGraph'):
-        """可視化用にサブグラフを登録します"""
-        self.subgraphs[node_name] = subgraph
-
+    def _is_parallel_branch(self, from_node: str) -> bool:
+        """指定されたノードから並列分岐しているかチェック"""
+        return from_node in self.edges and len(self.edges[from_node]) > 1
 
     def run(self, initial_state: NodeState) -> NodeState:
-        """グラフを実行します"""
+        """グラフを実行"""
         if not self.entry_point:
-            raise ValueError("Entry point not set. Use add_edge(Graph.START, 'node_name').")
+            raise ValueError("Entry point not set. Use add_edge(LLMGraph.START, 'node_name').")
+
+        # マージノードを検出
+        merge_nodes = self._detect_merge_nodes()
+        print(f"[Detected merge nodes]: {list(merge_nodes.keys())}")
 
         current_node_name = self.entry_point
         state = initial_state.copy()
-        
-        # エラー記録用
         state["__errors__"] = []
+        
+        # 並列実行の結果を追跡
+        # {マージノード名: {完了した入力ノード名: ステート}}
+        pending_merges: Dict[str, Dict[str, NodeState]] = {
+            merge: {} for merge in merge_nodes
+        }
 
         while current_node_name != self.END:
-            # 合流ノードかチェック
-            if current_node_name in self.merge_nodes:
-                branch_node, merge_func = self.merge_nodes[current_node_name]
-                print(f"[Merge Node]: Combining results at '{current_node_name}'")
+            if current_node_name not in self.nodes:
+                raise ValueError(f"Node '{current_node_name}' is not defined!")
+
+            print(f"[Executing]: '{current_node_name}'")
+            
+            # マージノードの処理
+            if current_node_name in merge_nodes:
+                print(f"[Merge Node]: '{current_node_name}' - waiting for {len(merge_nodes[current_node_name])} inputs")
                 
-                # 並列実行された結果を統合
-                parallel_states = state.get("__parallel_states__", [])
+                # 全ての入力が揃っているかチェック
+                required_inputs = set(merge_nodes[current_node_name])
+                completed_inputs = set(pending_merges[current_node_name].keys())
                 
+                if not required_inputs.issubset(completed_inputs):
+                    missing = required_inputs - completed_inputs
+                    raise RuntimeError(
+                        f"Merge node '{current_node_name}' reached before all inputs completed. "
+                        f"Missing: {missing}"
+                    )
+                
+                # 並列実行結果を取得（入力ノードの順序を保持）
+                parallel_states = [
+                    pending_merges[current_node_name][input_node]
+                    for input_node in merge_nodes[current_node_name]
+                ]
+                
+                # マージ関数を実行（複数のステートを引数として渡す）
+                node_func = self.nodes[current_node_name]
                 try:
-                    merged_result = merge_func(parallel_states)
-                    state.update(merged_result)
+                    # マージ関数は List[NodeState] を受け取る特殊な関数
+                    merged_result = node_func(parallel_states)
+                    if merged_result:
+                        state.update(merged_result)
+                    
+                    print(f"[Merge Complete]: {len(parallel_states)} results merged")
                 except Exception as e:
                     error_info = {
                         "node": current_node_name,
                         "error": str(e),
-                        "type": type(e).__name__,
-                        "context": "merge_function"
+                        "type": type(e).__name__
                     }
                     state["__errors__"].append(error_info)
-                    print(f"[Error in merge function '{current_node_name}']: {e}")
+                    print(f"[Error in merge node '{current_node_name}']: {e}")
                 
-                # 一時的な並列結果を削除
-                if "__parallel_states__" in state:
-                    del state["__parallel_states__"]
-                
-                # 合流ノード自体の実行は不要（マージ関数で処理済み）
-                # ノード関数が定義されている場合のみ実行（後方互換性のため）
-                if current_node_name in self.nodes:
-                    node_func = self.nodes[current_node_name]
-                    # プレースホルダー関数でない場合のみ実行
-                    if node_func.__name__ != "merge_placeholder":
-                        try:
-                            new_data = node_func(state)
-                            if new_data:
-                                state.update(new_data)
-                        except Exception as e:
-                            error_info = {
-                                "node": current_node_name,
-                                "error": str(e),
-                                "type": type(e).__name__
-                            }
-                            state["__errors__"].append(error_info)
-                            print(f"[Error in merge node '{current_node_name}']: {e}")
-                
-                # 次のノードへ
-                edge_data = self.edges.get(current_node_name)
-                if edge_data is None:
-                    current_node_name = self.END
-                elif isinstance(edge_data, str):
-                    current_node_name = edge_data
-                else:
-                    raise ValueError(f"Merge node '{current_node_name}' cannot have conditional or parallel edges")
-                continue
-
-            if current_node_name not in self.nodes:
-                raise ValueError(f"Node '{current_node_name}' is not defined!")
-
-            # ノード実行（エラーハンドリング追加）
-            node_func = self.nodes[current_node_name]
-            try:
-                new_data = node_func(state)
-                if new_data:
-                    state.update(new_data)
-            except Exception as e:
-                error_info = {
-                    "node": current_node_name,
-                    "error": str(e),
-                    "type": type(e).__name__
-                }
-                state["__errors__"].append(error_info)
-                print(f"[Error in node '{current_node_name}']: {e}")
-                # エラーが発生してもステートは更新せずに次のノードへ進む
-
-            # --- 次の行き先を決定 ---
-            edge_data = self.edges.get(current_node_name)
-
-            if edge_data is None:
-                current_node_name = self.END
+                # マージ完了後はクリーンアップ
+                pending_merges[current_node_name] = {}
             
-            # 並列エッジ (List[str])
-            elif isinstance(edge_data, list):
-                print(f"[Parallel Execution]: Branching from '{current_node_name}' to {edge_data}")
-                
-                parallel_results = []
-                parallel_errors = []
-                
-                for parallel_node in edge_data:
-                    # 各ノードを独立したステートで実行
-                    branch_state = copy.deepcopy(state)
-                    
-                    if parallel_node not in self.nodes:
-                        error_msg = f"Parallel node '{parallel_node}' is not defined!"
-                        error_info = {
-                            "node": parallel_node,
-                            "error": error_msg,
-                            "type": "ValueError"
-                        }
-                        parallel_errors.append(error_info)
-                        print(f"[Error]: {error_msg}")
-                        # エラーがあっても他の並列ノードは続行
-                        continue
-                    
-                    print(f"  → Executing parallel node: '{parallel_node}'")
-                    parallel_func = self.nodes[parallel_node]
-                    
-                    try:
-                        result = parallel_func(branch_state)
-                        
-                        if result:
-                            branch_state.update(result)
-                        
-                        # 正常に実行された結果を追加
-                        parallel_results.append(branch_state)
-                        
-                    except Exception as e:
-                        error_info = {
-                            "node": parallel_node,
-                            "error": str(e),
-                            "type": type(e).__name__,
-                            "context": "parallel_execution"
-                        }
-                        parallel_errors.append(error_info)
-                        print(f"[Error in parallel node '{parallel_node}']: {e}")
-                        
-                        # エラーが発生したノードの結果も記録（エラー情報付き）
-                        branch_state["__node_error__"] = error_info
-                        parallel_results.append(branch_state)
-                
-                # 並列実行のエラーをメインのエラーリストに追加
-                if parallel_errors:
-                    state["__errors__"].extend(parallel_errors)
-                
-                # 並列実行結果を一時保存（エラーがあっても全ての結果を保存）
-                state["__parallel_states__"] = parallel_results
-                
-                # 合流ノードを探す
-                merge_node = None
-                for node_name, (branch_from, _) in self.merge_nodes.items():
-                    if branch_from == current_node_name:
-                        merge_node = node_name
-                        break
-                
-                if merge_node:
-                    current_node_name = merge_node
-                else:
-                    raise ValueError(f"No merge node defined for parallel edges from '{current_node_name}'")
-            
-            # 条件付きエッジ (Func/Key, Map)
-            elif isinstance(edge_data, tuple):
-                condition, path_map = edge_data
+            # 通常ノードの処理
+            else:
+                node_func = self.nodes[current_node_name]
+                try:
+                    new_data = node_func(state)
+                    if new_data:
+                        state.update(new_data)
+                except Exception as e:
+                    error_info = {
+                        "node": current_node_name,
+                        "error": str(e),
+                        "type": type(e).__name__
+                    }
+                    state["__errors__"].append(error_info)
+                    print(f"[Error in node '{current_node_name}']: {e}")
+
+            # 次の行き先を決定
+            # 1. 条件付きエッジをチェック
+            if current_node_name in self.conditional_edges:
+                condition, path_map = self.conditional_edges[current_node_name]
                 
                 if callable(condition):
                     signal = condition(state)
-                elif isinstance(condition, str):
-                    signal = state.get(condition)
-                    if signal is None:
-                        raise ValueError(f"NodeState key '{condition}' not found for routing from '{current_node_name}'")
                 else:
-                    raise ValueError("Invalid condition type in edge")
+                    signal = state.get(condition)
                 
-                # 文字列化（Enum対応）
                 signal_str = str(signal).split('.')[-1] if hasattr(signal, 'name') else str(signal)
-
-                # マッピング解決
+                
                 next_dest = None
                 for key, val in path_map.items():
                     key_str = str(key).split('.')[-1] if hasattr(key, 'name') else str(key)
@@ -281,116 +182,124 @@ class LLMGraph:
                         break
                 
                 if next_dest:
-                    print(f"[Router decision]: '{signal_str}' => Go to [{next_dest}]")
+                    print(f"[Router]: '{signal_str}' → '{next_dest}'")
                     current_node_name = next_dest
                 else:
-                    raise ValueError(f"Router returned '{signal}', but not found in map: {path_map}")
+                    raise ValueError(f"Signal '{signal}' not found in path_map: {path_map}")
             
-            # 固定エッジ
+            # 2. 通常のエッジをチェック
+            elif current_node_name in self.edges:
+                next_nodes = self.edges[current_node_name]
+                
+                # 並列分岐の場合
+                if len(next_nodes) > 1:
+                    print(f"[Parallel Execution]: Branching to {next_nodes}")
+                    
+                    # 各並列ノードを独立したステートで実行
+                    for parallel_node in next_nodes:
+                        branch_state = copy.deepcopy(state)
+                        
+                        if parallel_node not in self.nodes:
+                            print(f"[Error]: Node '{parallel_node}' not defined")
+                            continue
+                        
+                        print(f"  → Executing: '{parallel_node}'")
+                        parallel_func = self.nodes[parallel_node]
+                        
+                        try:
+                            result = parallel_func(branch_state)
+                            if result:
+                                branch_state.update(result)
+                        except Exception as e:
+                            error_info = {
+                                "node": parallel_node,
+                                "error": str(e),
+                                "type": type(e).__name__
+                            }
+                            state["__errors__"].append(error_info)
+                            print(f"[Error in parallel node '{parallel_node}']: {e}")
+                            branch_state["__node_error__"] = error_info
+                        
+                        # 並列ノードの結果を保存（次のマージノード用）
+                        # このノードがどのマージノードに繋がっているかを確認
+                        if parallel_node in self.edges:
+                            next_merge = self.edges[parallel_node][0]
+                            if next_merge in merge_nodes:
+                                pending_merges[next_merge][parallel_node] = branch_state
+                    
+                    # 並列ノードの共通の出力先（マージノード）へ移動
+                    common_next = None
+                    for pnode in next_nodes:
+                        if pnode in self.edges:
+                            pnode_next = self.edges[pnode][0]
+                            if common_next is None:
+                                common_next = pnode_next
+                            elif common_next != pnode_next:
+                                raise ValueError(
+                                    f"Parallel nodes must converge to same merge node. "
+                                    f"Found: {common_next} and {pnode_next}"
+                                )
+                    
+                    if common_next:
+                        current_node_name = common_next
+                    else:
+                        current_node_name = self.END
+                
+                # 単一の次ノード
+                else:
+                    current_node_name = next_nodes[0]
+            
+            # 3. エッジがない場合は終了
             else:
-                current_node_name = edge_data
+                current_node_name = self.END
 
         return state
-    
-    # ==========================================================================
-    # 可視化 (Mermaid) [改良版 - 並列分岐対応]
-    # ==========================================================================
+
     def get_graph_mermaid(self) -> str:
+        """Mermaid図を生成"""
         lines = ["graph TD"]
         
         # スタイル定義
-        lines.append("  %% Styles")
-        lines.append("  classDef startClass fill:#f9f,stroke:#333,stroke-width:2px,rx:10,ry:10;")
-        lines.append("  classDef endClass fill:#f96,stroke:#333,stroke-width:2px,rx:10,ry:10;")
-        lines.append("  classDef nodeClass fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,rx:5,ry:5;")
-        lines.append("  classDef routerClass fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,stroke-dasharray: 5 5,rhombus;")
-        lines.append("  classDef mergeClass fill:#c8e6c9,stroke:#388e3c,stroke-width:3px,rx:5,ry:5;")
-        lines.append("  classDef subStartClass fill:#eee,stroke:#999,stroke-width:1px,rx:5,ry:5;")
+        lines.append("  classDef startClass fill:#f9f,stroke:#333,stroke-width:2px;")
+        lines.append("  classDef endClass fill:#f96,stroke:#333,stroke-width:2px;")
+        lines.append("  classDef nodeClass fill:#e1f5fe,stroke:#0277bd,stroke-width:2px;")
+        lines.append("  classDef mergeClass fill:#c8e6c9,stroke:#388e3c,stroke-width:3px;")
+        lines.append("  classDef routerClass fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;")
 
-        def render_content(graph_obj, prefix="", is_subgraph=False):
-            # START / END
-            style = "subStartClass" if is_subgraph else "startClass"
-            end_style = "subStartClass" if is_subgraph else "endClass"
-            lines.append(f"    {prefix}{self.START}(START):::{style}")
-            lines.append(f"    {prefix}{self.END}(END):::{end_style}")
+        # マージノード検出
+        merge_nodes = self._detect_merge_nodes()
 
-            # ノード (合流ノードは特別なスタイル)
-            for node in graph_obj.nodes:
-                node_id = f"{prefix}{node}"
-                if node in graph_obj.merge_nodes:
-                    lines.append(f"    {node_id}{{{{Merge: {node}}}}}:::mergeClass")
+        # START / END
+        lines.append(f"  {self.START}(START):::startClass")
+        lines.append(f"  {self.END}(END):::endClass")
+
+        # ノード描画
+        for node in self.nodes:
+            if node in merge_nodes:
+                lines.append(f"  {node}{{{{{node}}}}}:::mergeClass")
+            else:
+                lines.append(f"  {node}[{node}]:::nodeClass")
+
+        # エントリーポイント
+        if self.entry_point:
+            lines.append(f"  {self.START} --> {self.entry_point}")
+
+        # 通常のエッジ
+        for from_node, to_nodes in self.edges.items():
+            for to_node in to_nodes:
+                # 並列分岐は点線で表示
+                if len(to_nodes) > 1:
+                    lines.append(f"  {from_node} -.parallel.-> {to_node}")
                 else:
-                    lines.append(f"    {node_id}[{node}]:::nodeClass")
+                    lines.append(f"  {from_node} --> {to_node}")
 
-            # Entry Point
-            if graph_obj.entry_point:
-                lines.append(f"    {prefix}{self.START} --> {prefix}{graph_obj.entry_point}")
+        # 条件付きエッジ
+        for from_node, (condition, path_map) in self.conditional_edges.items():
+            router_id = f"router_{from_node}"
+            label = condition.__name__ if callable(condition) else condition
+            lines.append(f"  {from_node} --> {router_id}{{{label}}}:::routerClass")
+            for signal, to_node in path_map.items():
+                s_label = str(signal).split('.')[-1]
+                lines.append(f"  {router_id} -- {s_label} --> {to_node}")
 
-            # Edges
-            for from_node, edge_data in graph_obj.edges.items():
-                from_id = f"{prefix}{from_node}"
-                
-                # 並列エッジ
-                if isinstance(edge_data, list):
-                    # 並列ノードへのエッジを描画
-                    for to_node in edge_data:
-                        to_id = f"{prefix}{to_node}"
-                        lines.append(f"    {from_id} -.parallel.-> {to_id}")
-                    
-                    # 並列ノードから合流ノードへのエッジを追加
-                    # この from_node に対応する合流ノードを探す
-                    merge_node = None
-                    for m_node, (branch_from, _) in graph_obj.merge_nodes.items():
-                        if branch_from == from_node:
-                            merge_node = m_node
-                            break
-                    
-                    if merge_node:
-                        merge_id = f"{prefix}{merge_node}"
-                        # 各並列ノードから合流ノードへの点線エッジ
-                        for to_node in edge_data:
-                            to_id = f"{prefix}{to_node}"
-                            lines.append(f"    {to_id} -.->|merge| {merge_id}")
-                
-                # 条件付きエッジ
-                elif isinstance(edge_data, tuple):
-                    condition, path_map = edge_data
-                    router_id = f"{prefix}router_{from_node}"
-                    
-                    if callable(condition):
-                        label = f"{{{condition.__name__}}}"
-                    else:
-                        label = f"{{{condition}}}"
-                    
-                    lines.append(f"    {from_id} --> {router_id}{label}:::routerClass")
-                    
-                    for signal, to_node in path_map.items():
-                        to_id = f"{prefix}{to_node}"
-                        s_label = str(signal).split('.')[-1]
-                        lines.append(f"    {router_id} -- {s_label} --> {to_id}")
-                
-                # 固定エッジ
-                else:
-                    to_id = f"{prefix}{edge_data}"
-                    lines.append(f"    {from_id} --> {to_id}")
-
-        if self.subgraphs:
-            # サブグラフ描画
-            for node_name, sub_graph in self.subgraphs.items():
-                cluster_id = f"Sub_{node_name}"
-                lines.append(f"  subgraph {cluster_id} [\"{node_name}\"]")
-                lines.append("    direction TD")
-                lines.append(f"    style {cluster_id} fill:#fffde7,stroke:#fbc02d,stroke-width:2px")
-                render_content(sub_graph, prefix=f"{node_name}_", is_subgraph=True)
-                lines.append("  end")
-
-            # メイングラフ描画
-            lines.append("  subgraph Main [Main Workflow]")
-            lines.append("    style Main fill:none,stroke:none")
-            render_content(self, prefix="", is_subgraph=False)
-            lines.append("  end")
-        
-        else:
-            render_content(self, prefix="", is_subgraph=False)
-        
         return "\n".join(lines)
