@@ -1,8 +1,7 @@
 
 # 依存ライブラリのインポート
-from mlx_augllm import MlxLLM
-import json, yaml
-import re
+from mlx_augllm import MlxLLM 
+import yaml
 
 # 自作ライブラリのインポート
 from src.llm_graph_kit import LLMGraph, NodeState, GraphLogger
@@ -418,9 +417,11 @@ if __name__ == "__main__":
 
     # 2. 入力
     question = (
-        "夏の夜とSFというテーマで小説のあらすじを作成してください。"
+        #"遠い未来から来た猫型ロボットとの生活というテーマで小説にあらすじを作成してください。"
+        #"平成初期の思い出というテーマで小説にあらすじを作成してください。"
+        #"夏の夜とSFというテーマで小説のあらすじを作成してください。"
         #"昼下がりの暇つぶしというテーマで小説のあらすじを作成してください。"
-        #"伝説の野球選手というテーマで小説のあらすじを作成してください。"
+        "伝説の野球選手というテーマで小説のあらすじを作成してください。"
     )
 
     # 3. 実行
