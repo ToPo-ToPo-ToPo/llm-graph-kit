@@ -1,5 +1,4 @@
-from typing import Dict, Any, Callable, Union, Tuple, List
-import copy
+from typing import Dict, Any, Callable, Union, Tuple
 
 # ステートの型定義
 NodeState = Dict[str, Any]
@@ -7,8 +6,7 @@ NodeState = Dict[str, Any]
 class LLMGraph:
     """
     ノードとエッジで構成されるステートマシンエンジン。
-    Router関数だけでなく、ステートの値を直接参照するルーティングに対応。
-    並列分岐・合流機能を追加しました。
+    Router関数だけでなく、ステートの値を直接参照するルーティングに対応しました。
     """
     # 定数定義
     START = "__START__"
@@ -17,12 +15,11 @@ class LLMGraph:
     def __init__(self):
         # ノード名 -> 関数
         self.nodes: Dict[str, Callable[[NodeState], NodeState]] = {}
-        # ノード名 -> 次のノード名 または (条件, マッピング辞書) または List[str](並列分岐)
-        self.edges: Dict[str, Union[str, Tuple[Union[Callable, str], Dict[str, str]], List[str]]] = {} 
+        # ノード名 -> 次のノード名 または (条件, マッピング辞書)
+        # 条件は Callable(関数) または str(ステートのキー)
+        self.edges: Dict[str, Union[str, Tuple[Union[Callable, str], Dict[str, str]]]] = {} 
         self.entry_point: str = ""
         self.subgraphs: Dict[str, 'LLMGraph'] = {}
-        # 合流ノード情報: {合流ノード名: (分岐元ノード名, 結果統合関数)}
-        self.merge_nodes: Dict[str, Tuple[str, Callable[[List[NodeState]], NodeState]]] = {}
 
     def add_node(self, name: str, func: Callable[[NodeState], NodeState]):
         """ノードを登録します"""
@@ -58,32 +55,6 @@ class LLMGraph:
         """
         self.edges[from_node] = (condition, path_map)
 
-    def add_parallel_edges(
-        self,
-        from_node: str,
-        to_nodes: List[str],
-        merge_node: str,
-        merge_func: Callable[[List[NodeState]], NodeState] = None
-    ):
-        """
-        並列分岐を定義します。
-        
-        Args:
-            from_node: 分岐元のノード名
-            to_nodes: 並列実行するノード名のリスト
-            merge_node: 結果を統合する合流ノード名
-            merge_func: 複数の結果を統合する関数 (デフォルトは結果を配列に格納)
-        """
-        self.edges[from_node] = to_nodes
-        
-        # デフォルトのマージ関数: 各結果を配列に格納
-        if merge_func is None:
-            def default_merge(states: List[NodeState]) -> NodeState:
-                return {"parallel_results": states}
-            merge_func = default_merge
-        
-        self.merge_nodes[merge_node] = (from_node, merge_func)
-
     def add_subgraph(self, node_name: str, subgraph: 'LLMGraph'):
         """可視化用にサブグラフを登録します"""
         self.subgraphs[node_name] = subgraph
@@ -97,37 +68,6 @@ class LLMGraph:
         state = initial_state.copy()
 
         while current_node_name != self.END:
-            # 合流ノードかチェック
-            if current_node_name in self.merge_nodes:
-                branch_node, merge_func = self.merge_nodes[current_node_name]
-                print(f"[Merge Node]: Combining results at '{current_node_name}'")
-                
-                # 並列実行された結果を統合
-                parallel_states = state.get("__parallel_states__", [])
-                merged_result = merge_func(parallel_states)
-                state.update(merged_result)
-                
-                # 一時的な並列結果を削除
-                if "__parallel_states__" in state:
-                    del state["__parallel_states__"]
-                
-                # 合流ノード自体の実行
-                if current_node_name in self.nodes:
-                    node_func = self.nodes[current_node_name]
-                    new_data = node_func(state)
-                    if new_data:
-                        state.update(new_data)
-                
-                # 次のノードへ
-                edge_data = self.edges.get(current_node_name)
-                if edge_data is None:
-                    current_node_name = self.END
-                elif isinstance(edge_data, str):
-                    current_node_name = edge_data
-                else:
-                    raise ValueError(f"Merge node '{current_node_name}' cannot have conditional or parallel edges")
-                continue
-
             if current_node_name not in self.nodes:
                 raise ValueError(f"Node '{current_node_name}' is not defined!")
 
@@ -143,46 +83,11 @@ class LLMGraph:
             if edge_data is None:
                 current_node_name = self.END
             
-            # 並列エッジ (List[str])
-            elif isinstance(edge_data, list):
-                print(f"[Parallel Execution]: Branching from '{current_node_name}' to {edge_data}")
-                
-                parallel_results = []
-                for parallel_node in edge_data:
-                    # 各ノードを独立したステートで実行
-                    branch_state = copy.deepcopy(state)
-                    
-                    if parallel_node not in self.nodes:
-                        raise ValueError(f"Parallel node '{parallel_node}' is not defined!")
-                    
-                    print(f"  → Executing parallel node: '{parallel_node}'")
-                    parallel_func = self.nodes[parallel_node]
-                    result = parallel_func(branch_state)
-                    
-                    if result:
-                        branch_state.update(result)
-                    
-                    parallel_results.append(branch_state)
-                
-                # 並列実行結果を一時保存
-                state["__parallel_states__"] = parallel_results
-                
-                # 合流ノードを探す
-                merge_node = None
-                for node_name, (branch_from, _) in self.merge_nodes.items():
-                    if branch_from == current_node_name:
-                        merge_node = node_name
-                        break
-                
-                if merge_node:
-                    current_node_name = merge_node
-                else:
-                    raise ValueError(f"No merge node defined for parallel edges from '{current_node_name}'")
-            
             # 条件付きエッジ (Func/Key, Map)
             elif isinstance(edge_data, tuple):
                 condition, path_map = edge_data
                 
+                # ★改良点: 関数なら実行、文字列ならステートから取得
                 if callable(condition):
                     signal = condition(state)
                 elif isinstance(condition, str):
@@ -216,7 +121,7 @@ class LLMGraph:
         return state
     
     # ==========================================================================
-    # 可視化 (Mermaid) [改良版 - 並列分岐対応]
+    # 可視化 (Mermaid) [改良版]
     # ==========================================================================
     def get_graph_mermaid(self) -> str:
         lines = ["graph TD"]
@@ -227,7 +132,6 @@ class LLMGraph:
         lines.append("  classDef endClass fill:#f96,stroke:#333,stroke-width:2px,rx:10,ry:10;")
         lines.append("  classDef nodeClass fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,rx:5,ry:5;")
         lines.append("  classDef routerClass fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,stroke-dasharray: 5 5,rhombus;")
-        lines.append("  classDef mergeClass fill:#c8e6c9,stroke:#388e3c,stroke-width:3px,rx:5,ry:5;")
         lines.append("  classDef subStartClass fill:#eee,stroke:#999,stroke-width:1px,rx:5,ry:5;")
 
         def render_content(graph_obj, prefix="", is_subgraph=False):
@@ -237,13 +141,10 @@ class LLMGraph:
             lines.append(f"    {prefix}{self.START}(START):::{style}")
             lines.append(f"    {prefix}{self.END}(END):::{end_style}")
 
-            # ノード (合流ノードは特別なスタイル)
+            # ノード
             for node in graph_obj.nodes:
                 node_id = f"{prefix}{node}"
-                if node in graph_obj.merge_nodes:
-                    lines.append(f"    {node_id}{{{{Merge: {node}}}}}:::mergeClass")
-                else:
-                    lines.append(f"    {node_id}[{node}]:::nodeClass")
+                lines.append(f"    {node_id}[{node}]:::nodeClass")
 
             # Entry Point
             if graph_obj.entry_point:
@@ -253,21 +154,15 @@ class LLMGraph:
             for from_node, edge_data in graph_obj.edges.items():
                 from_id = f"{prefix}{from_node}"
                 
-                # 並列エッジ
-                if isinstance(edge_data, list):
-                    for to_node in edge_data:
-                        to_id = f"{prefix}{to_node}"
-                        lines.append(f"    {from_id} -.parallel.-> {to_id}")
-                
-                # 条件付きエッジ
-                elif isinstance(edge_data, tuple):
+                if isinstance(edge_data, tuple):
                     condition, path_map = edge_data
                     router_id = f"{prefix}router_{from_node}"
                     
+                    # ラベルの決定（関数名 or キー名）
                     if callable(condition):
                         label = f"{{{condition.__name__}}}"
                     else:
-                        label = f"{{{condition}}}"
+                        label = f"{{{condition}}}" # ステートのキー名を表示
                     
                     lines.append(f"    {from_id} --> {router_id}{label}:::routerClass")
                     
@@ -275,8 +170,6 @@ class LLMGraph:
                         to_id = f"{prefix}{to_node}"
                         s_label = str(signal).split('.')[-1]
                         lines.append(f"    {router_id} -- {s_label} --> {to_id}")
-                
-                # 固定エッジ
                 else:
                     to_id = f"{prefix}{edge_data}"
                     lines.append(f"    {from_id} --> {to_id}")
