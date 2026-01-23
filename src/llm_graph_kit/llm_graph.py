@@ -71,7 +71,7 @@ class LLMGraph:
         Args:
             from_node: 分岐元のノード名
             to_nodes: 並列実行するノード名のリスト
-            merge_node: 結果を統合する合流ノード名
+            merge_node: 結果を統合する合流ノード名（自動的にノードとして登録されます）
             merge_func: 複数の結果を統合する関数 (デフォルトは結果を配列に格納)
         """
         self.edges[from_node] = to_nodes
@@ -82,7 +82,15 @@ class LLMGraph:
                 return {"parallel_results": states}
             merge_func = default_merge
         
+        # 合流ノード情報を登録（ノード関数は不要）
         self.merge_nodes[merge_node] = (from_node, merge_func)
+        
+        # 合流ノードを自動的にノードとして登録（ダミー関数）
+        if merge_node not in self.nodes:
+            def merge_placeholder(state: NodeState) -> NodeState:
+                # マージ処理は run() 内で実行されるため、ここでは何もしない
+                return {}
+            self.nodes[merge_node] = merge_placeholder
 
     def add_subgraph(self, node_name: str, subgraph: 'LLMGraph'):
         """可視化用にサブグラフを登録します"""
@@ -108,28 +116,42 @@ class LLMGraph:
                 
                 # 並列実行された結果を統合
                 parallel_states = state.get("__parallel_states__", [])
-                merged_result = merge_func(parallel_states)
-                state.update(merged_result)
+                
+                try:
+                    merged_result = merge_func(parallel_states)
+                    state.update(merged_result)
+                except Exception as e:
+                    error_info = {
+                        "node": current_node_name,
+                        "error": str(e),
+                        "type": type(e).__name__,
+                        "context": "merge_function"
+                    }
+                    state["__errors__"].append(error_info)
+                    print(f"[Error in merge function '{current_node_name}']: {e}")
                 
                 # 一時的な並列結果を削除
                 if "__parallel_states__" in state:
                     del state["__parallel_states__"]
                 
-                # 合流ノード自体の実行
+                # 合流ノード自体の実行は不要（マージ関数で処理済み）
+                # ノード関数が定義されている場合のみ実行（後方互換性のため）
                 if current_node_name in self.nodes:
                     node_func = self.nodes[current_node_name]
-                    try:
-                        new_data = node_func(state)
-                        if new_data:
-                            state.update(new_data)
-                    except Exception as e:
-                        error_info = {
-                            "node": current_node_name,
-                            "error": str(e),
-                            "type": type(e).__name__
-                        }
-                        state["__errors__"].append(error_info)
-                        print(f"[Error in merge node '{current_node_name}']: {e}")
+                    # プレースホルダー関数でない場合のみ実行
+                    if node_func.__name__ != "merge_placeholder":
+                        try:
+                            new_data = node_func(state)
+                            if new_data:
+                                state.update(new_data)
+                        except Exception as e:
+                            error_info = {
+                                "node": current_node_name,
+                                "error": str(e),
+                                "type": type(e).__name__
+                            }
+                            state["__errors__"].append(error_info)
+                            print(f"[Error in merge node '{current_node_name}']: {e}")
                 
                 # 次のノードへ
                 edge_data = self.edges.get(current_node_name)

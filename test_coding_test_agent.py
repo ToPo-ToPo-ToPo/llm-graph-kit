@@ -76,10 +76,6 @@ class TestAgent:
         workflow.add_node(name="unit_test", func=self._generate_unit_test)
         workflow.add_node(name="security_test", func=self._generate_security_test)
         workflow.add_node(name="performance_test", func=self._generate_performance_test)
-        
-        # 結果統合ノード
-        workflow.add_node(name="merge_results", func=self._merge_test_results)
-        
         # 最終評価ノード
         workflow.add_node(name="final_evaluation", func=self._final_evaluation)
 
