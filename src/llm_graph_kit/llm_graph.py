@@ -88,6 +88,7 @@ class LLMGraph:
         """可視化用にサブグラフを登録します"""
         self.subgraphs[node_name] = subgraph
 
+
     def run(self, initial_state: NodeState) -> NodeState:
         """グラフを実行します"""
         if not self.entry_point:
@@ -95,6 +96,9 @@ class LLMGraph:
 
         current_node_name = self.entry_point
         state = initial_state.copy()
+        
+        # エラー記録用
+        state["__errors__"] = []
 
         while current_node_name != self.END:
             # 合流ノードかチェック
@@ -114,9 +118,18 @@ class LLMGraph:
                 # 合流ノード自体の実行
                 if current_node_name in self.nodes:
                     node_func = self.nodes[current_node_name]
-                    new_data = node_func(state)
-                    if new_data:
-                        state.update(new_data)
+                    try:
+                        new_data = node_func(state)
+                        if new_data:
+                            state.update(new_data)
+                    except Exception as e:
+                        error_info = {
+                            "node": current_node_name,
+                            "error": str(e),
+                            "type": type(e).__name__
+                        }
+                        state["__errors__"].append(error_info)
+                        print(f"[Error in merge node '{current_node_name}']: {e}")
                 
                 # 次のノードへ
                 edge_data = self.edges.get(current_node_name)
@@ -131,11 +144,21 @@ class LLMGraph:
             if current_node_name not in self.nodes:
                 raise ValueError(f"Node '{current_node_name}' is not defined!")
 
-            # ノード実行
+            # ノード実行（エラーハンドリング追加）
             node_func = self.nodes[current_node_name]
-            new_data = node_func(state)
-            if new_data:
-                state.update(new_data)
+            try:
+                new_data = node_func(state)
+                if new_data:
+                    state.update(new_data)
+            except Exception as e:
+                error_info = {
+                    "node": current_node_name,
+                    "error": str(e),
+                    "type": type(e).__name__
+                }
+                state["__errors__"].append(error_info)
+                print(f"[Error in node '{current_node_name}']: {e}")
+                # エラーが発生してもステートは更新せずに次のノードへ進む
 
             # --- 次の行き先を決定 ---
             edge_data = self.edges.get(current_node_name)
@@ -148,23 +171,55 @@ class LLMGraph:
                 print(f"[Parallel Execution]: Branching from '{current_node_name}' to {edge_data}")
                 
                 parallel_results = []
+                parallel_errors = []
+                
                 for parallel_node in edge_data:
                     # 各ノードを独立したステートで実行
                     branch_state = copy.deepcopy(state)
                     
                     if parallel_node not in self.nodes:
-                        raise ValueError(f"Parallel node '{parallel_node}' is not defined!")
+                        error_msg = f"Parallel node '{parallel_node}' is not defined!"
+                        error_info = {
+                            "node": parallel_node,
+                            "error": error_msg,
+                            "type": "ValueError"
+                        }
+                        parallel_errors.append(error_info)
+                        print(f"[Error]: {error_msg}")
+                        # エラーがあっても他の並列ノードは続行
+                        continue
                     
                     print(f"  → Executing parallel node: '{parallel_node}'")
                     parallel_func = self.nodes[parallel_node]
-                    result = parallel_func(branch_state)
                     
-                    if result:
-                        branch_state.update(result)
-                    
-                    parallel_results.append(branch_state)
+                    try:
+                        result = parallel_func(branch_state)
+                        
+                        if result:
+                            branch_state.update(result)
+                        
+                        # 正常に実行された結果を追加
+                        parallel_results.append(branch_state)
+                        
+                    except Exception as e:
+                        error_info = {
+                            "node": parallel_node,
+                            "error": str(e),
+                            "type": type(e).__name__,
+                            "context": "parallel_execution"
+                        }
+                        parallel_errors.append(error_info)
+                        print(f"[Error in parallel node '{parallel_node}']: {e}")
+                        
+                        # エラーが発生したノードの結果も記録（エラー情報付き）
+                        branch_state["__node_error__"] = error_info
+                        parallel_results.append(branch_state)
                 
-                # 並列実行結果を一時保存
+                # 並列実行のエラーをメインのエラーリストに追加
+                if parallel_errors:
+                    state["__errors__"].extend(parallel_errors)
+                
+                # 並列実行結果を一時保存（エラーがあっても全ての結果を保存）
                 state["__parallel_states__"] = parallel_results
                 
                 # 合流ノードを探す
@@ -188,7 +243,7 @@ class LLMGraph:
                 elif isinstance(condition, str):
                     signal = state.get(condition)
                     if signal is None:
-                         raise ValueError(f"NodeState key '{condition}' not found for routing from '{current_node_name}'")
+                        raise ValueError(f"NodeState key '{condition}' not found for routing from '{current_node_name}'")
                 else:
                     raise ValueError("Invalid condition type in edge")
                 

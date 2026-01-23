@@ -105,15 +105,27 @@ class TestAgent:
     # カスタムマージ関数
     #---------------------------------------------------------------------------
     def _custom_merge_function(self, states: list) -> NodeState:
-        """
-        並列実行された3つのテスト結果を統合します。
-        """
+
+        # 初期化
         merged = {
-            "unit_test_result": states[0].get("test_result", {}),
-            "security_test_result": states[1].get("test_result", {}),
-            "performance_test_result": states[2].get("test_result", {}),
             "all_tests_completed": True
         }
+        
+        # 回答をまとめていく
+        for i, (state, test_name) in enumerate(zip(states, ["unit_test", "security_test", "performance_test"])):
+            
+            # エラーチェック
+            if "__node_error__" in state:
+                merged[f"{test_name}_result"] = {
+                    "status": "error",
+                    "error": state["__node_error__"]["error"]
+                }
+                merged["all_tests_completed"] = False
+            
+            # 正常の処理の場合
+            else:
+                merged[f"{test_name}_result"] = state.get("test_result", {})
+        
         return merged
     
     #---------------------------------------------------------------------------
