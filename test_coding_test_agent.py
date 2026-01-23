@@ -1,6 +1,5 @@
 # 依存ライブラリのインポート
 from mlx_augllm import MlxLLM
-import json
 import yaml
 
 # 自作ライブラリのインポート
@@ -76,6 +75,8 @@ class TestAgent:
         workflow.add_node(name="unit_test", func=self._generate_unit_test)
         workflow.add_node(name="security_test", func=self._generate_security_test)
         workflow.add_node(name="performance_test", func=self._generate_performance_test)
+        # 回答のマージを行うノード
+        workflow.add_node(name="merge_results", func=self._custom_merge_function)
         # 最終評価ノード
         workflow.add_node(name="final_evaluation", func=self._final_evaluation)
 
@@ -83,15 +84,18 @@ class TestAgent:
         # エッジ定義
         #------------------------------------------------------------
         workflow.add_edge(LLMGraph.START, "analyze_code")
-        
-        # 並列分岐: 3つのテストを同時実行
-        workflow.add_parallel_edges(
-            from_node="analyze_code",
-            to_nodes=["unit_test", "security_test", "performance_test"],
-            merge_node="merge_results",
-            merge_func=self._custom_merge_function
-        )
-        
+
+        # 並列分岐: analyze_codeから3つのテストへ
+        workflow.add_edge("analyze_code", "unit_test")
+        workflow.add_edge("analyze_code", "security_test")
+        workflow.add_edge("analyze_code", "performance_test")
+
+        # 3つのテスト結果をmerge_resultsで統合
+        workflow.add_edge("unit_test", "merge_results")
+        workflow.add_edge("security_test", "merge_results")
+        workflow.add_edge("performance_test", "merge_results")
+
+        # 最後の回答
         workflow.add_edge("merge_results", "final_evaluation")
         workflow.add_edge("final_evaluation", LLMGraph.END)
 
@@ -301,24 +305,6 @@ class TestAgent:
         test_data = self._parse_yaml_response(response)
         
         return {"test_result": test_data}
-    
-    #---------------------------------------------------------------------------
-    # テスト結果統合ノード（空実装 - マージ関数で処理）
-    #---------------------------------------------------------------------------
-    def _merge_test_results(self, state: NodeState) -> NodeState:
-        """
-        並列実行されたテスト結果が既にマージされているため、
-        このノードでは追加処理のみ行います。
-        """
-        GraphLogger.print_phase_header("Merging Test Results", emoji="🔗")
-        
-        GraphLogger.log(
-            style="info",
-            content="3つのテスト結果を統合しました",
-            title="統合完了"
-        )
-        
-        return {}
     
     #---------------------------------------------------------------------------
     # 最終評価ノード

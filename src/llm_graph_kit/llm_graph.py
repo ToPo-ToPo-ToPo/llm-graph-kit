@@ -86,7 +86,7 @@ class LLMGraph:
 
         # マージノードを検出
         merge_nodes = self._detect_merge_nodes()
-        print(f"[Detected merge nodes]: {list(merge_nodes.keys())}")
+        #print(f"[Detected merge nodes]: {list(merge_nodes.keys())}")
 
         current_node_name = self.entry_point
         state = initial_state.copy()
@@ -102,7 +102,7 @@ class LLMGraph:
             if current_node_name not in self.nodes:
                 raise ValueError(f"Node '{current_node_name}' is not defined!")
 
-            print(f"[Executing]: '{current_node_name}'")
+            #print(f"[Executing]: '{current_node_name}'")
             
             # マージノードの処理
             if current_node_name in merge_nodes:
@@ -203,7 +203,7 @@ class LLMGraph:
                             print(f"[Error]: Node '{parallel_node}' not defined")
                             continue
                         
-                        print(f"  → Executing: '{parallel_node}'")
+                        #print(f"  → Executing: '{parallel_node}'")
                         parallel_func = self.nodes[parallel_node]
                         
                         try:
