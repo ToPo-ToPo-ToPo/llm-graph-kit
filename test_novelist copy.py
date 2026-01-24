@@ -1,3 +1,4 @@
+
 # 依存ライブラリのインポート
 from mlx_augllm import MlxLLM 
 import yaml
@@ -27,7 +28,7 @@ class NovelistAgent:
         質問を受け取り、グラフを構築・可視化・実行して結果を返します。
         """
 
-        # 1. メイングラフの構築
+        # 1. メイングラフの構築(この時点で内部でサブグラフも定義される)
         main_workflow = self.create_main_graph()
 
         # 2. グラフ構造の可視化 (Mermaid)
@@ -70,7 +71,6 @@ class NovelistAgent:
         workflow.add_edge(LLMGraph.START, "create_manuscript")
         workflow.add_edge("create_manuscript", "review")
         workflow.add_edge("review", "check_result")
-        
         # 条件付きエッジ
         workflow.add_conditional_edge(
             "check_result",  # 分岐元
@@ -80,7 +80,6 @@ class NovelistAgent:
                 "complete": "create_book_blurb"
             }
         )
-        
         workflow.add_edge("create_book_blurb", LLMGraph.END)
 
         return workflow
@@ -91,7 +90,7 @@ class NovelistAgent:
     def _create_manuscript(self, state: NodeState) -> NodeState:
 
         # ログの作成
-        GraphLogger.print_phase_header("Create draft node", emoji="🟦")
+        GraphLogger.print_phase_header("Create draft node", emoji="🟠")
 
         # 必要なデータを取得
         input = state["input"]
@@ -121,7 +120,7 @@ class NovelistAgent:
                 f"{input}\n\n"
                 "### 前回作成した「あらすじ」\n"
                 f"{pre_manuscript}\n\n"
-                f"{review_result}\n\n"
+                f"{review_result}\n\n"  # 受け取った整形済みテキストをそのまま埋め込む
                 "### 編集者からの総評・修正指示\n"
                 f"{str(feedback)}"
             )
@@ -134,21 +133,21 @@ class NovelistAgent:
         # 結果の出力
         GraphLogger.log(title="原稿作成結果:", content=response, style="response")
 
-        # 次のノードへの引継ぎ情報
+        # 次のノードへの引き継ぎ情報
         return {"manuscript": response}
     
     #---------------------------------------------------------------------------
-    # LLMでレビューを実施(判定ロジックをPython側に移譲)
+    # LLMでレビューを実施（判定ロジックをPython側に移譲）
     #---------------------------------------------------------------------------
     def _create_review(self, state: NodeState) -> NodeState:
 
         # 実行中の表示
-        GraphLogger.print_phase_header("Create review node", emoji="🟦")
+        GraphLogger.print_phase_header("Create review node", emoji="🟠")
 
         # 必要なデータを取得
-        input = state["input"]
-        manuscript = state["manuscript"]
-        retry_count = state.get("retry_count", 0)
+        input = state["input"]                     # 元のお題
+        manuscript = state["manuscript"]           # 作成された原稿
+        retry_count = state.get("retry_count", 0)  # リトライの回数
 
         # 無限ループの回避用
         if retry_count >= 5:
@@ -160,32 +159,33 @@ class NovelistAgent:
             }
 
         # システムプロンプトの構築
+        # ★変更点1: 「判定ルール」と「final_judgement出力」を削除し、純粋な採点に特化
         system_prompt = (
             "あなたは、作家の卵を育てる**建設的で親切な編集者**です。\n"
             "「あらすじ」の完成度を高めるために、良い点は褒め、改善点は具体的にアドバイスしてください。\n\n"
             "以下の評価項目について評価を行ってください。\n"
             "「あらすじ」としての分かりやすさと、お題への適合性を最優先してください。\n"
             "過度に厳密な科学考証や、過剰な独自性を求める必要はありません。\n\n"
-            "**なぜその点数なのか、評価理由(reason)を必ず「箇条書き」で具体的に記述してください。**\n\n"
+            "**なぜその点数なのか、評価理由（reason）を必ず「箇条書き」で具体的に記述してください。**\n\n"
             "---\n\n"
             "### 評価項目\n\n"
-            "1. 読者を惹きつける内容か? (attractiveness)\n"
+            "1. 読者を惹きつける内容か？ (attractiveness)\n"
             "   - フックや盛り上がりがあるか\n"
             "   - 売れそうな内容になっているか\n"
-            "2. 内容はわかりやすいか? (clarity)\n"
+            "2. 内容はわかりやすいか？ (clarity)\n"
             "   - 起承転結が整理されているか\n"
             "   - 専門用語や特別な用語を多用していないか\n"
             "3. 指示への適合性 (instruction_alignment)\n"
-            "   - ユーザーの指示(お題)を無視していないか\n"
+            "   - ユーザーの指示（お題）を無視していないか\n"
             "4. 公開安全性 (public_safety)\n"
             "   - 倫理的な問題点がないか\n\n"
             "---\n\n"
-            "### 採点基準(目安)\n\n"
+            "### 採点基準（目安）\n\n"
             "- **8-10点**: 文句なし。素晴らしい。\n"
             "- **6-7点**: 合格点。ただし、いくつか改善が必要。\n"
             "- **5点以下**: 明確な矛盾や、指示無視、不適切な内容がある。\n\n"
             "---\n\n"
-            "### 出力形式(厳守)\n\n"
+            "### 出力形式（厳守）\n\n"
             "必ず以下の**YAML形式**のみで出力してください。\n"
             "文章や解説文は一切含めず、データのみを出力してください。\n\n"
             "scores:\n"
@@ -282,21 +282,21 @@ class NovelistAgent:
             formatted_report = "評価データの取得に失敗しました。"
         
         # アドバイスの整形
-        advice_list = review_data.get("advice", [])
+        advice_list = state.get("review_advice", [])
         advice_text = ""
         if advice_list:
             advice_text = "\n".join([f"- {item}" for item in advice_list])
         else:
-            advice_text = "(特になし。自由に執筆してください)"
+            advice_text = "（特になし。自由に執筆してください）"
 
         # ログに判定結果を表示
         GraphLogger.log(style="info", content=f"機械判定結果: {final_judgement} (閾値: {pass_threshold}点)", title="System Judgement")
 
-        # 次のノードへの引継ぎ情報
+        # 次のノードへの引き継ぎ情報
         return {
-            "review_judgement": final_judgement,
-            "review_report": formatted_report,
-            "review_advice": advice_text,
+            "review_judgement": final_judgement, # 判定結果
+            "review_report": formatted_report,  # 評価結果
+            "review_advice": advice_text,  # 総合的なアドバイス
             "retry_count": retry_count + 1
         }
     
@@ -309,7 +309,7 @@ class NovelistAgent:
         """
         review_judgement = state.get("review_judgement", "NG")
         
-        # 判定ロジック
+        # 判定ロジック (ここではシンプルに判定結果をそのまま使う例)
         if review_judgement == "OK":
             decision = "complete"
         else:
@@ -325,9 +325,10 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     def _write_novel_body(self, state: NodeState) -> NodeState:
 
-        GraphLogger.print_phase_header("Write Final Novel", emoji="🟦")
+        #
+        GraphLogger.print_phase_header("Write Final Novel", emoji="🟠")
 
-        # 承認されたプロット(あらすじ)を取得
+        # 承認されたプロット（あらすじ）を取得
         approved_plot = state["manuscript"]
         feedback = state["review_advice"]
         
@@ -337,9 +338,9 @@ class NovelistAgent:
             "また、編集者からの「執筆時のアドバイス」がある場合は、それを最大限に反映してください。\n\n"
             "### 執筆のガイドライン\n"
             "1. **形式**: プロットのような箇条書きや説明調ではなく、情景描写、心理描写、会話文を用いた「物語」として書いてください。\n"
-            "2. **構成**: プロットの要素(導入、展開、結末など)を滑らかに繋げてください。\n"
+            "2. **構成**: プロットの要素（導入、展開、結末など）を滑らかに繋げてください。\n"
             "3. **文体**: 読者の感情を揺さぶるような、情緒的かつリズミカルな文体で書いてください。\n"
-            "4. **禁止事項**: 「~という物語である」、「~がクライマックスだ」といったメタな説明は排除してください。"
+            "4. **禁止事項**: 「〜という物語である」「〜がクライマックスだ」といったメタな説明は排除してください。"
         )
 
         if feedback == "":
@@ -364,31 +365,33 @@ class NovelistAgent:
         
         GraphLogger.log(style="response", content=response, title="Final Novel")
 
+        # 最終的な成果物を 'final_novel' キーに保存
+        # (manuscriptを上書きしても良いですが、プロットも残しておくと後で比較できて便利です)
         return {"final_novel": response}
     
     #---------------------------------------------------------------------------
-    # 承認済みプロットから「本の裏表紙(Blurb)」を作成するノード
+    # 【変更】承認済みプロットから「本の裏表紙（Blurb）」を作成するノード
     #---------------------------------------------------------------------------
     def _create_book_blurb(self, state: NodeState) -> NodeState:
 
-        GraphLogger.print_phase_header("Create Book Blurb", emoji="🟦")
+        GraphLogger.print_phase_header("Create Book Blurb", emoji="🟠")
 
-        # 承認されたプロット(全体構成)
+        # 承認されたプロット（全体構成）
         approved_plot = state["manuscript"]
         
-        # 編集者のアドバイス(強調ポイントなど)
+        # 編集者のアドバイス（強調ポイントなど）
         feedback = state["review_advice"]
         
         system_prompt = (
             "あなたは純文学の小説家です。\n"
             "あなたの仕事は、渡されたプロットを元に、**小説のあらすじ**を執筆することです。\n"
-            "### ルール(厳守)\n"
+            "### ルール（厳守）\n"
             "- 出力はあらすじ部分のみとしてください。"
         )
 
         user_prompt = (
             "以下のプロットを元に、魅力的な小説のあらすじを書いてください。\n\n"
-            "### 物語のプロット(全容)\n"
+            "### 物語のプロット（全容）\n"
             f"{approved_plot}\n\n"
             "### 編集者からの執筆アドバイス\n"
             f"{feedback}"
@@ -403,9 +406,8 @@ class NovelistAgent:
 
         return {"final_novel": response}
 
-
 #-----------------------------------------------------------------------
-# メインプログラム 
+# メインプログラム
 #-----------------------------------------------------------------------
 if __name__ == "__main__":
 

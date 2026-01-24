@@ -273,16 +273,11 @@ class LLMGraph:
         lines.append(f"  {self.START}(START):::startClass")
         lines.append(f"  {self.END}(END):::endClass")
 
-        # ノード描画（条件分岐ノードは菱形で表示）
+        # ノード描画
         for node in self.nodes:
             if node in merge_nodes:
-                # マージノード
                 lines.append(f"  {node}{{{{{node}}}}}:::mergeClass")
-            elif node in self.conditional_edges:
-                # 条件分岐ノード（菱形）
-                lines.append(f"  {node}{{{node}}}:::routerClass")
             else:
-                # 通常のノード
                 lines.append(f"  {node}[{node}]:::nodeClass")
 
         # エントリーポイント
@@ -298,17 +293,13 @@ class LLMGraph:
                 else:
                     lines.append(f"  {from_node} --> {to_node}")
 
-        # 条件付きエッジ（ノードから直接分岐）
+        # 条件付きエッジ
         for from_node, (condition, path_map) in self.conditional_edges.items():
-            # 条件ラベルを取得
-            if callable(condition):
-                condition_label = f"[{condition.__name__}]"
-            else:
-                condition_label = f"[{condition}]"
-            
-            # from_nodeから直接各分岐先へエッジを描画
+            router_id = f"router_{from_node}"
+            label = condition.__name__ if callable(condition) else condition
+            lines.append(f"  {from_node} --> {router_id}{{{label}}}:::routerClass")
             for signal, to_node in path_map.items():
-                signal_label = str(signal).split('.')[-1]
-                lines.append(f"  {from_node} -- {signal_label} --> {to_node}")
+                s_label = str(signal).split('.')[-1]
+                lines.append(f"  {router_id} -- {s_label} --> {to_node}")
 
         return "\n".join(lines)
