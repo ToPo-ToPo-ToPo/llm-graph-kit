@@ -91,7 +91,7 @@ class NovelistAgent:
     def _create_manuscript(self, state: NodeState) -> NodeState:
 
         # ログの作成
-        GraphLogger.print_phase_header("Create draft node", emoji="🟦")
+        GraphLogger.log(style="phase", title="create_manuscript", content="Create draft node")
 
         # 必要なデータを取得
         input = state["input"]
@@ -143,7 +143,7 @@ class NovelistAgent:
     def _create_review(self, state: NodeState) -> NodeState:
 
         # 実行中の表示
-        GraphLogger.print_phase_header("Create review node", emoji="🟦")
+        GraphLogger.log(style="subtask", title="create_review", content="Create review node")
 
         # 必要なデータを取得
         input = state["input"]
@@ -325,7 +325,7 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     def _write_novel_body(self, state: NodeState) -> NodeState:
 
-        GraphLogger.print_phase_header("Write Final Novel", emoji="🟦")
+        GraphLogger.log(style="phase", title="Write_nobel_body_phase", content="Write Final Novel")
 
         # 承認されたプロット(あらすじ)を取得
         approved_plot = state["manuscript"]
@@ -371,7 +371,7 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     def _create_book_blurb(self, state: NodeState) -> NodeState:
 
-        GraphLogger.print_phase_header("Create Book Blurb", emoji="🟦")
+        GraphLogger.log(style="phase", title="create_book_blurb", content="Create Book Blurb")
 
         # 承認されたプロット(全体構成)
         approved_plot = state["manuscript"]
