@@ -1,6 +1,7 @@
 # 依存ライブラリのインポート
 from mlx_augllm import MlxLLM 
 import yaml
+import re
 
 # 自作ライブラリのインポート
 from src.llm_graph_kit import LLMGraph, NodeState, GraphLogger
@@ -14,7 +15,6 @@ class NovelistAgent:
     # 初期化
     #--------------------------------------------------
     def __init__(self, model_path: str) -> None:
-
         # LLMの初期化
         print(f"Loading Model: {model_path} ...")
         self.llm = MlxLLM(model_path=model_path)
@@ -22,26 +22,27 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     # エージェントを実行 (メインエントリポイント)
     #---------------------------------------------------------------------------
-    def run(self, question: str) -> NodeState:
+    def run(self, question: str):
         """
-        質問を受け取り、グラフを構築・可視化・実行して結果を返します。
+        ジェネレータを返すように変更。
+        呼び出し元でforループを回して結果を取得する。
         """
 
         # 1. メイングラフの構築
         main_workflow = self.create_main_graph()
 
-        # 2. グラフ構造の可視化 (Mermaid)
-        print("\n" + "="*60)
-        print(" Workflow Visualization (Mermaid)")
-        print("="*60)
-        print(main_workflow.get_graph_mermaid())
-        print("="*60 + "\n")
+        # 2. グラフ構造の可視化 (Mermaid) - イベントとして送信
+        yield {
+            "type": "log", 
+            "agent": "system", 
+            "content": f"Workflow Definition:\n{main_workflow.get_graph_mermaid()}"
+        }
 
         # 3. ワークフローの実行
         initial_input = {"input": question}
-        final_state = main_workflow.run(initial_input)
         
-        return final_state
+        # 【修正箇所】return ではなく yield from を使用して、下位ジェネレータの値を流す
+        yield from main_workflow.run(initial_input)
     
     #---------------------------------------------------------------------------
     # メイングラフの定義
@@ -50,7 +51,6 @@ class NovelistAgent:
         """
         メインのワークフローを定義します。
         """
-
         #------------------------------------------------------------
         # 初期化
         #------------------------------------------------------------
@@ -88,13 +88,14 @@ class NovelistAgent:
     #---------------------------------------------------------------------------
     # LLMで回答のドラフトを作成
     #---------------------------------------------------------------------------
-    def _create_manuscript(self, state: NodeState) -> NodeState:
+    def _create_manuscript(self, state: NodeState):
+        agent_name = "create_manuscript"
 
         # ログの作成
-        GraphLogger.log(style="phase", title="create_manuscript", content="Create draft node")
+        yield {"type": "log", "agent": agent_name, "content": "Create draft node start"}
 
         # 必要なデータを取得
-        input = state["input"]
+        input_text = state["input"]
         review_result = state.get("review_report", "")
         feedback = state.get("review_advice", "")
         pre_manuscript = state.get("manuscript", "")
@@ -109,7 +110,7 @@ class NovelistAgent:
         user_prompt = (
             "以下の指示をもとに小説の「あらすじ」を考えてください。\n\n"
             "### 与えられた指示\n"
-            f"{input}"
+            f"{input_text}"
         )
         
         # フィードバックがある場合
@@ -118,7 +119,7 @@ class NovelistAgent:
                 "前回作成したあらすじに対して、編集者から厳しいレビューが入りました。\n"
                 "指摘事項と評価スコアを反映し、**劇的に改善された修正版**を作成してください。\n\n"
                 "### 元の指示の内容\n"
-                f"{input}\n\n"
+                f"{input_text}\n\n"
                 "### 前回作成した「あらすじ」\n"
                 f"{pre_manuscript}\n\n"
                 f"{review_result}\n\n"
@@ -126,38 +127,46 @@ class NovelistAgent:
                 f"{str(feedback)}"
             )
 
-        # LLMで回答を作成
+        # LLMで回答を作成 (ストリーミング)
         response = ""
         for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
             response += chunk
+            yield {
+                "type": "answer_text",
+                "agent": agent_name,
+                "taskId": f"{agent_name}-answer-text", 
+                "content": chunk
+            }
         
-        # 結果の出力
-        GraphLogger.log(title="原稿作成結果:", content=response, style="response")
+        # 結果の出力 (ログとしてyield)
+        yield {"type": "log", "agent": agent_name, "content": "原稿作成完了"}
 
-        # 次のノードへの引継ぎ情報
-        return {"manuscript": response}
+        # 次のノードへの引継ぎ情報 (__state_update__ で返す)
+        yield {"__state_update__": {"manuscript": response}}
     
     #---------------------------------------------------------------------------
     # LLMでレビューを実施(判定ロジックをPython側に移譲)
     #---------------------------------------------------------------------------
-    def _create_review(self, state: NodeState) -> NodeState:
+    def _create_review(self, state: NodeState):
+        agent_name = "review"
 
         # 実行中の表示
-        GraphLogger.log(style="subtask", title="create_review", content="Create review node")
+        yield {"type": "log", "agent": agent_name, "content": "Create review node start"}
 
         # 必要なデータを取得
-        input = state["input"]
+        input_text = state["input"]
         manuscript = state["manuscript"]
         retry_count = state.get("retry_count", 0)
 
         # 無限ループの回避用
         if retry_count >= 5:
-            print(f"[Sub: Eval] Max retries ({retry_count}) reached. Approving result.")
-            return {
+            yield {"type": "log", "agent": agent_name, "content": f"[Sub: Eval] Max retries ({retry_count}) reached. Approving result."}
+            yield {"__state_update__": {
                 "review_judgement": "OK", 
                 "review_advice": [],
                 "review_report": "最大リトライ回数に達したため、現在の原稿を採用します。"
-            }
+            }}
+            return
 
         # システムプロンプトの構築
         system_prompt = (
@@ -215,7 +224,7 @@ class NovelistAgent:
         user_prompt = (
             "以下の小説の「あらすじ」について、編集者として厳しくレビューをしてください。\n\n"
             "### 与えられた指示\n"
-            f"{input}\n\n"
+            f"{input_text}\n\n"
             "### 現状の小説の「あらすじ」\n"
             f"{manuscript}"
         )
@@ -224,9 +233,16 @@ class NovelistAgent:
         response = ""
         for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
             response += chunk
+            # レビュー生成中も表示したい場合はここをコメントアウト解除
+            yield {
+               "type": "answer_text",
+               "agent": agent_name,
+               "taskId": f"{agent_name}-answer-text", 
+               "content": chunk
+            }
         
-        # 結果の出力 (YAMLとして表示)
-        GraphLogger.log(title="レビュー結果:", content=response, style="response")
+        # 結果の出力 (YAMLとして表示) - logとして送出
+        yield {"type": "log", "agent": agent_name, "content": "レビュー生成完了。解析を開始します。"}
 
         # レビュー結果のパース(YAMLとしてパース)
         try:
@@ -238,7 +254,7 @@ class NovelistAgent:
             
             review_data = yaml.safe_load(cleaned_response)
         except Exception as e:
-            print(f"[Error] YAML Parse failed: {e}")
+            yield {"type": "log", "agent": agent_name, "content": f"[Error] YAML Parse failed: {e}"}
             review_data = {
                 "scores": {},
                 "advice": ["レビュー解析エラー"]
@@ -290,23 +306,28 @@ class NovelistAgent:
             advice_text = "(特になし。自由に執筆してください)"
 
         # ログに判定結果を表示
-        GraphLogger.log(style="info", content=f"機械判定結果: {final_judgement} (閾値: {pass_threshold}点)", title="System Judgement")
+        yield {
+            "type": "log", 
+            "agent": agent_name, 
+            "content": f"機械判定結果: {final_judgement} (閾値: {pass_threshold}点)\n{formatted_report}"
+        }
 
         # 次のノードへの引継ぎ情報
-        return {
+        yield {"__state_update__": {
             "review_judgement": final_judgement,
             "review_report": formatted_report,
             "review_advice": advice_text,
             "retry_count": retry_count + 1
-        }
+        }}
     
     #---------------------------------------------------------------------------
     # チェックノード
     #---------------------------------------------------------------------------
-    def _check_result_node(self, state: NodeState) -> NodeState:
+    def _check_result_node(self, state: NodeState):
         """
         レビュー結果を確認し、次のアクションを決定するノード。
         """
+        agent_name = "check_result"
         review_judgement = state.get("review_judgement", "NG")
         
         # 判定ロジック
@@ -315,21 +336,26 @@ class NovelistAgent:
         else:
             decision = "retry"
         
-        print(f"[Check Node] Judgement: {review_judgement} -> Decision: {decision}")
+        yield {
+            "type": "log", 
+            "agent": agent_name, 
+            "content": f"[Check Node] Judgement: {review_judgement} -> Decision: {decision}"
+        }
         
         # 決定内容をステートに保存
-        return {"decision": decision}
+        yield {"__state_update__": {"decision": decision}}
     
     #---------------------------------------------------------------------------
     # プロットを元に小説本文を執筆するノード
+    # (注: 現在のグラフ定義では使用されていませんが、形式のみ更新します)
     #---------------------------------------------------------------------------
-    def _write_novel_body(self, state: NodeState) -> NodeState:
-
-        GraphLogger.log(style="phase", title="Write_nobel_body_phase", content="Write Final Novel")
+    def _write_novel_body(self, state: NodeState):
+        agent_name = "write_novel_body"
+        yield {"type": "log", "agent": agent_name, "content": "Write Final Novel Start"}
 
         # 承認されたプロット(あらすじ)を取得
         approved_plot = state["manuscript"]
-        feedback = state["review_advice"]
+        feedback = state.get("review_advice", "")
         
         system_prompt = (
             "あなたはプロの小説家です。\n"
@@ -361,23 +387,28 @@ class NovelistAgent:
         response = ""
         for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
             response += chunk
+            yield {
+                "type": "answer_text",
+                "agent": agent_name,
+                "taskId": f"{agent_name}-answer-text", 
+                "content": chunk
+            }
         
-        GraphLogger.log(style="response", content=response, title="Final Novel")
-
-        return {"final_novel": response}
+        yield {"type": "log", "agent": agent_name, "content": "本文執筆完了"}
+        yield {"__state_update__": {"final_novel": response}}
     
     #---------------------------------------------------------------------------
     # 承認済みプロットから「本の裏表紙(Blurb)」を作成するノード
     #---------------------------------------------------------------------------
-    def _create_book_blurb(self, state: NodeState) -> NodeState:
-
-        GraphLogger.log(style="phase", title="create_book_blurb", content="Create Book Blurb")
+    def _create_book_blurb(self, state: NodeState):
+        agent_name = "create_book_blurb"
+        yield {"type": "log", "agent": agent_name, "content": "Create Book Blurb Start"}
 
         # 承認されたプロット(全体構成)
         approved_plot = state["manuscript"]
         
         # 編集者のアドバイス(強調ポイントなど)
-        feedback = state["review_advice"]
+        feedback = state.get("review_advice", "")
         
         system_prompt = (
             "あなたは純文学の小説家です。\n"
@@ -398,10 +429,15 @@ class NovelistAgent:
         response = ""
         for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
             response += chunk
+            yield {
+                "type": "answer_text",
+                "agent": agent_name,
+                "taskId": f"{agent_name}-answer-text", 
+                "content": chunk
+            }
         
-        GraphLogger.log(style="response", content=response, title="Final Blurb")
-
-        return {"final_novel": response}
+        yield {"type": "log", "agent": agent_name, "content": "Blurb作成完了"}
+        yield {"__state_update__": {"final_novel": response}}
 
 
 #-----------------------------------------------------------------------
@@ -414,13 +450,24 @@ if __name__ == "__main__":
     agent = NovelistAgent(model_path=model_path)
 
     # 2. 入力
-    question = (
-        #"遠い未来から来た猫型ロボットとの生活というテーマで小説にあらすじを作成してください。"
-        #"平成初期の思い出というテーマで小説にあらすじを作成してください。"
-        #"夏の夜とSFというテーマで小説のあらすじを作成してください。"
-        #"昼下がりの暇つぶしというテーマで小説のあらすじを作成してください。"
-        "伝説の野球選手というテーマで小説のあらすじを作成してください。"
-    )
+    question = "伝説の野球選手というテーマで小説のあらすじを作成してください。"
 
-    # 3. 実行
-    final_state = agent.run(question=question)
+    print(f"Request: {question}\n")
+
+    # 3. 実行 (ストリーミングの受け取り)
+    for event in agent.run(question=question):
+        
+        # テキスト生成イベント
+        if event["type"] == "answer_text":
+            # agentやtaskIdを見て表示場所を変えることも可能
+            print(event["content"], end="", flush=True)
+
+        # ログイベント
+        elif event["type"] == "log":
+            print(f"\n[LOG] {event['agent']}: {event['content']}")
+            
+        # 画像生成イベント (将来の拡張用)
+        elif event["type"] == "images":
+            print(f"\n[IMAGE] {event['content']}")
+            
+    print("\n\nProcess Completed.")

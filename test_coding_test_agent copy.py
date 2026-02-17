@@ -3,8 +3,7 @@ from mlx_augllm import MlxLLM
 import yaml
 
 # 自作ライブラリのインポート
-# GraphLoggerは廃止し、LLMGraphとNodeStateのみ使用
-from src.llm_graph_kit import LLMGraph, NodeState
+from src.llm_graph_kit import LLMGraph, NodeState, GraphLogger
 
 #-----------------------------------------------------------------------
 # テストエージェントクラス
@@ -25,29 +24,33 @@ class TestAgent:
     #---------------------------------------------------------------------------
     # エージェントを実行 (メインエントリポイント)
     #---------------------------------------------------------------------------
-    def run(self, code: str, requirements: str = ""):
+    def run(self, code: str, requirements: str = "") -> NodeState:
         """
-        コードを受け取り、グラフを構築・可視化・実行して結果をジェネレータとして返します。
+        コードを受け取り、グラフを構築・可視化・実行して結果を返します。
+        
+        Args:
+            code: テスト対象のコード
+            requirements: 要件や仕様（オプション）
         """
 
         # 1. メイングラフの構築
         main_workflow = self.create_main_graph()
 
-        # 2. グラフ構造の可視化 (Mermaid) - ログイベントとして送出
-        yield {
-            "type": "log",
-            "agent": "system",
-            "content": f"Test Workflow Visualization (Mermaid):\n{main_workflow.get_graph_mermaid()}"
-        }
+        # 2. グラフ構造の可視化 (Mermaid)
+        print("\n" + "="*60)
+        print(" Test Workflow Visualization (Mermaid)")
+        print("="*60)
+        print(main_workflow.get_graph_mermaid())
+        print("="*60 + "\n")
 
         # 3. ワークフローの実行
         initial_input = {
             "code": code,
             "requirements": requirements
         }
+        final_state = main_workflow.run(initial_input)
         
-        # 下位ジェネレータの結果をそのまま流す
-        yield from main_workflow.run(initial_input)
+        return final_state
     
     #---------------------------------------------------------------------------
     # メイングラフの定義
@@ -99,13 +102,10 @@ class TestAgent:
         return workflow
     
     #---------------------------------------------------------------------------
-    # カスタムマージ関数 (変更なし: 通常関数として定義)
+    # カスタムマージ関数
     #---------------------------------------------------------------------------
     def _custom_merge_function(self, states: list) -> NodeState:
-        """
-        LLMGraphの仕様により、ジェネレータでない関数は
-        戻り値をそのままステート更新として扱います。
-        """
+
         # 初期化
         merged = {
             "all_tests_completed": True
@@ -131,12 +131,11 @@ class TestAgent:
     #---------------------------------------------------------------------------
     # コード分析ノード
     #---------------------------------------------------------------------------
-    def _analyze_code(self, state: NodeState):
+    def _analyze_code(self, state: NodeState) -> NodeState:
         """
         テスト対象のコードを分析し、テスト戦略を立てます。
         """
-        agent_name = "analyze_code"
-        yield {"type": "log", "agent": agent_name, "content": "Code Analysis Start 🔍"}
+        GraphLogger.print_phase_header("Code Analysis", emoji="🔍")
 
         code = state["code"]
         requirements = state.get("requirements", "")
@@ -160,26 +159,19 @@ class TestAgent:
         response = ""
         for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
             response += chunk
-            yield {
-                "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer",
-                "content": chunk
-            }
         
-        yield {"type": "log", "agent": agent_name, "content": "コード分析完了"}
+        GraphLogger.log(title="コード分析結果", content=response, style="response")
 
-        yield {"__state_update__": {"analysis": response}}
+        return {"analysis": response}
     
     #---------------------------------------------------------------------------
     # ユニットテスト生成ノード
     #---------------------------------------------------------------------------
-    def _generate_unit_test(self, state: NodeState):
+    def _generate_unit_test(self, state: NodeState) -> NodeState:
         """
         ユニットテストケースを生成します。
         """
-        agent_name = "unit_test"
-        yield {"type": "log", "agent": agent_name, "content": "Unit Test Generation Start"}
+        GraphLogger.print_subtask_start(1, "Unit Test Generation")
 
         code = state["code"]
         analysis = state.get("analysis", "")
@@ -208,29 +200,22 @@ class TestAgent:
         response = ""
         for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
             response += chunk
-            yield {
-                "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer",
-                "content": chunk
-            }
         
-        yield {"type": "log", "agent": agent_name, "content": "ユニットテスト生成完了"}
+        GraphLogger.log(title="ユニットテスト設計", content=response, style="response")
 
         # YAMLパース
         test_data = self._parse_yaml_response(response)
         
-        yield {"__state_update__": {"test_result": test_data}}
+        return {"test_result": test_data}
     
     #---------------------------------------------------------------------------
     # セキュリティテスト生成ノード
     #---------------------------------------------------------------------------
-    def _generate_security_test(self, state: NodeState):
+    def _generate_security_test(self, state: NodeState) -> NodeState:
         """
         セキュリティテストケースを生成します。
         """
-        agent_name = "security_test"
-        yield {"type": "log", "agent": agent_name, "content": "Security Test Generation Start"}
+        GraphLogger.print_subtask_start(2, "Security Test Generation")
 
         code = state["code"]
         analysis = state.get("analysis", "")
@@ -263,29 +248,22 @@ class TestAgent:
         response = ""
         for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
             response += chunk
-            yield {
-                "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer",
-                "content": chunk
-            }
         
-        yield {"type": "log", "agent": agent_name, "content": "セキュリティテスト生成完了"}
+        GraphLogger.log(title="セキュリティテスト設計", content=response, style="response")
 
         # YAMLパース
         test_data = self._parse_yaml_response(response)
         
-        yield {"__state_update__": {"test_result": test_data}}
+        return {"test_result": test_data}
     
     #---------------------------------------------------------------------------
     # パフォーマンステスト生成ノード
     #---------------------------------------------------------------------------
-    def _generate_performance_test(self, state: NodeState):
+    def _generate_performance_test(self, state: NodeState) -> NodeState:
         """
         パフォーマンステストケースを生成します。
         """
-        agent_name = "performance_test"
-        yield {"type": "log", "agent": agent_name, "content": "Performance Test Generation Start"}
+        GraphLogger.print_subtask_start(3, "Performance Test Generation")
 
         code = state["code"]
         analysis = state.get("analysis", "")
@@ -320,29 +298,22 @@ class TestAgent:
         response = ""
         for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
             response += chunk
-            yield {
-                "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer",
-                "content": chunk
-            }
         
-        yield {"type": "log", "agent": agent_name, "content": "パフォーマンステスト生成完了"}
+        GraphLogger.log(title="パフォーマンステスト設計", content=response, style="response")
 
         # YAMLパース
         test_data = self._parse_yaml_response(response)
         
-        yield {"__state_update__": {"test_result": test_data}}
+        return {"test_result": test_data}
     
     #---------------------------------------------------------------------------
     # 最終評価ノード
     #---------------------------------------------------------------------------
-    def _final_evaluation(self, state: NodeState):
+    def _final_evaluation(self, state: NodeState) -> NodeState:
         """
         全テスト結果を統合し、総合評価を行います。
         """
-        agent_name = "final_evaluation"
-        yield {"type": "log", "agent": agent_name, "content": "Final Evaluation Start 📊"}
+        GraphLogger.print_phase_header("Final Evaluation", emoji="📊")
 
         unit_test = state.get("unit_test_result", {})
         security_test = state.get("security_test_result", {})
@@ -377,19 +348,13 @@ class TestAgent:
         response = ""
         for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
             response += chunk
-            yield {
-                "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer",
-                "content": chunk
-            }
         
-        yield {"type": "log", "agent": agent_name, "content": "最終評価完了"}
+        GraphLogger.log(title="最終評価レポート", content=response, style="response")
 
-        yield {"__state_update__": {"final_report": response}}
+        return {"final_report": response}
     
     #---------------------------------------------------------------------------
-    # ヘルパー: YAML応答のパース (変更なし)
+    # ヘルパー: YAML応答のパース
     #---------------------------------------------------------------------------
     def _parse_yaml_response(self, response: str) -> dict:
         """
@@ -678,21 +643,9 @@ class CryptoTradingBot:
     print("4. 💰 暗号通貨トレーディングBot")
     print("\n※ コード内の test_code_X と requirements_X を変更して試してください\n")
 
-    # 3. 実行 (ストリーミングループ)
-    print("Start Testing...")
+    # 3. 実行
+    final_state = agent.run(code=test_code, requirements=requirements)
     
-    for event in agent.run(code=test_code, requirements=requirements):
-        # ログ表示
-        if event["type"] == "log":
-             # 簡易的な色分け表示 (ANSI escape code)
-            BLUE = '\033[94m'
-            ENDC = '\033[0m'
-            print(f"\n{BLUE}[LOG: {event['agent']}] {event['content']}{ENDC}")
-        
-        # 回答テキスト表示
-        elif event["type"] == "answer_text":
-            print(event["content"], end="", flush=True)
-            
     print("\n" + "="*60)
     print("テスト実行完了！")
     print("="*60)
