@@ -36,7 +36,7 @@ class TestAgent:
         # 2. グラフ構造の可視化 (Mermaid) - ログイベントとして送出
         yield {
             "type": "log",
-            "agent": "system",
+            "node": "system",
             "content": f"Test Workflow Visualization (Mermaid):\n{main_workflow.get_graph_mermaid()}"
         }
 
@@ -135,8 +135,8 @@ class TestAgent:
         """
         テスト対象のコードを分析し、テスト戦略を立てます。
         """
-        agent_name = "analyze_code"
-        yield {"type": "log", "agent": agent_name, "content": "Code Analysis Start 🔍"}
+        node_name = "analyze_code"
+        yield {"type": "log", "node": node_name, "content": "Code Analysis Start 🔍"}
 
         code = state["code"]
         requirements = state.get("requirements", "")
@@ -162,14 +162,14 @@ class TestAgent:
             response += chunk
             yield {
                 "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer",
+                "node": node_name,
+                "taskId": f"{node_name}-answer",
                 "content": chunk
             }
         
-        yield {"type": "log", "agent": agent_name, "content": "コード分析完了"}
+        yield {"type": "log", "node": node_name, "content": "コード分析完了"}
 
-        yield {"__state_update__": {"analysis": response}}
+        return {"analysis": response}
     
     #---------------------------------------------------------------------------
     # ユニットテスト生成ノード
@@ -178,8 +178,8 @@ class TestAgent:
         """
         ユニットテストケースを生成します。
         """
-        agent_name = "unit_test"
-        yield {"type": "log", "agent": agent_name, "content": "Unit Test Generation Start"}
+        node_name = "unit_test"
+        yield {"type": "log", "node": node_name, "content": "Unit Test Generation Start"}
 
         code = state["code"]
         analysis = state.get("analysis", "")
@@ -210,17 +210,17 @@ class TestAgent:
             response += chunk
             yield {
                 "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer",
+                "node": node_name,
+                "taskId": f"{node_name}-answer",
                 "content": chunk
             }
         
-        yield {"type": "log", "agent": agent_name, "content": "ユニットテスト生成完了"}
+        yield {"type": "log", "node": node_name, "content": "ユニットテスト生成完了"}
 
         # YAMLパース
         test_data = self._parse_yaml_response(response)
         
-        yield {"__state_update__": {"test_result": test_data}}
+        return {"test_result": test_data}
     
     #---------------------------------------------------------------------------
     # セキュリティテスト生成ノード
@@ -229,8 +229,8 @@ class TestAgent:
         """
         セキュリティテストケースを生成します。
         """
-        agent_name = "security_test"
-        yield {"type": "log", "agent": agent_name, "content": "Security Test Generation Start"}
+        node_name = "security_test"
+        yield {"type": "log", "node": node_name, "content": "Security Test Generation Start"}
 
         code = state["code"]
         analysis = state.get("analysis", "")
@@ -265,17 +265,17 @@ class TestAgent:
             response += chunk
             yield {
                 "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer",
+                "node": node_name,
+                "taskId": f"{node_name}-answer",
                 "content": chunk
             }
         
-        yield {"type": "log", "agent": agent_name, "content": "セキュリティテスト生成完了"}
+        yield {"type": "log", "node": node_name, "content": "セキュリティテスト生成完了"}
 
         # YAMLパース
         test_data = self._parse_yaml_response(response)
         
-        yield {"__state_update__": {"test_result": test_data}}
+        return {"test_result": test_data}
     
     #---------------------------------------------------------------------------
     # パフォーマンステスト生成ノード
@@ -284,8 +284,8 @@ class TestAgent:
         """
         パフォーマンステストケースを生成します。
         """
-        agent_name = "performance_test"
-        yield {"type": "log", "agent": agent_name, "content": "Performance Test Generation Start"}
+        node_name = "performance_test"
+        yield {"type": "log", "node": node_name, "content": "Performance Test Generation Start"}
 
         code = state["code"]
         analysis = state.get("analysis", "")
@@ -322,17 +322,17 @@ class TestAgent:
             response += chunk
             yield {
                 "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer",
+                "node": node_name,
+                "taskId": f"{node_name}-answer",
                 "content": chunk
             }
         
-        yield {"type": "log", "agent": agent_name, "content": "パフォーマンステスト生成完了"}
+        yield {"type": "log", "node": node_name, "content": "パフォーマンステスト生成完了"}
 
         # YAMLパース
         test_data = self._parse_yaml_response(response)
         
-        yield {"__state_update__": {"test_result": test_data}}
+        return {"test_result": test_data}
     
     #---------------------------------------------------------------------------
     # 最終評価ノード
@@ -341,8 +341,8 @@ class TestAgent:
         """
         全テスト結果を統合し、総合評価を行います。
         """
-        agent_name = "final_evaluation"
-        yield {"type": "log", "agent": agent_name, "content": "Final Evaluation Start 📊"}
+        node_name = "final_evaluation"
+        yield {"type": "log", "node": node_name, "content": "Final Evaluation Start 📊"}
 
         unit_test = state.get("unit_test_result", {})
         security_test = state.get("security_test_result", {})
@@ -379,14 +379,14 @@ class TestAgent:
             response += chunk
             yield {
                 "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer",
+                "node": node_name,
+                "taskId": f"{node_name}-answer",
                 "content": chunk
             }
         
-        yield {"type": "log", "agent": agent_name, "content": "最終評価完了"}
+        yield {"type": "log", "node": node_name, "content": "最終評価完了"}
 
-        yield {"__state_update__": {"final_report": response}}
+        return {"final_report": response}
     
     #---------------------------------------------------------------------------
     # ヘルパー: YAML応答のパース (変更なし)
@@ -687,7 +687,7 @@ class CryptoTradingBot:
              # 簡易的な色分け表示 (ANSI escape code)
             BLUE = '\033[94m'
             ENDC = '\033[0m'
-            print(f"\n{BLUE}[LOG: {event['agent']}] {event['content']}{ENDC}")
+            print(f"\n{BLUE}[LOG: {event['node']}] {event['content']}{ENDC}")
         
         # 回答テキスト表示
         elif event["type"] == "answer_text":

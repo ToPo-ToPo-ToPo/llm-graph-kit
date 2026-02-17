@@ -86,7 +86,7 @@ class LLMGraph:
     def run(self, initial_state: NodeState):
         """グラフを実行（ジェネレータとして動作）"""
         if not self.entry_point:
-            raise ValueError("Entry point not set. Use add_edge(LLMGraph.START, 'node_name').")
+            raise ValueError("Entry point not set.")
 
         merge_nodes = self._detect_merge_nodes()
         current_node_name = self.entry_point
@@ -105,24 +105,17 @@ class LLMGraph:
             # 共通ヘルパー: ノード実行とストリーミング処理
             # -------------------------------------------------------
             def execute_node_logic(func, arg):
-                result_chunk = None
-                # ノード関数を実行
                 response = func(arg)
                 
-                # ジェネレータ（ストリーミング対応ノード）の場合
+                # ジェネレータの場合
                 if inspect.isgenerator(response):
-                    for item in response:
-                        # ステート更新用の特殊キーをチェック
-                        if isinstance(item, dict) and "__state_update__" in item:
-                            result_chunk = item["__state_update__"]
-                        else:
-                            # 通常のチャンクはそのまま上位(main)へ流す
-                            yield item
+                    # yield された値はそのまま上位へ流し(yield from)、
+                    # return された値(StopIterationのvalue)を変数に受け取る
+                    return_value = yield from response
+                    return return_value
                 else:
-                    # 通常関数の場合
-                    result_chunk = response
-                
-                return result_chunk
+                    # 通常関数の場合はそのまま戻り値を返す
+                    return response
 
             # -------------------------------------------------------
             # A. マージノードの処理
@@ -150,9 +143,8 @@ class LLMGraph:
                     if merged_result:
                         state.update(merged_result)
                 except Exception as e:
-                     # エラーハンドリング（簡略化）
-                    print(f"Error: {e}")
-                    state["__errors__"].append(str(e))
+                    state["__errors__"].append(f"Error in {current_node_name}: {str(e)}")
+                    yield {"type": "error", "agent": current_node_name, "content": str(e)}
                 
                 pending_merges[current_node_name] = {}
             
@@ -167,8 +159,8 @@ class LLMGraph:
                     if new_data:
                         state.update(new_data)
                 except Exception as e:
-                    print(f"Error: {e}")
-                    state["__errors__"].append(str(e))
+                    state["__errors__"].append(f"Error in {current_node_name}: {str(e)}")
+                    yield {"type": "error", "agent": current_node_name, "content": str(e)}
 
             # -------------------------------------------------------
             # 次の行き先決定（既存ロジックとほぼ同じ）

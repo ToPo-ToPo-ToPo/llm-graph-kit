@@ -1,10 +1,9 @@
 # 依存ライブラリのインポート
 from mlx_augllm import MlxLLM 
 import yaml
-import re
 
 # 自作ライブラリのインポート
-from src.llm_graph_kit import LLMGraph, NodeState, GraphLogger
+from src.llm_graph_kit import LLMGraph, NodeState
 
 #-----------------------------------------------------------------------
 # エージェントクラス
@@ -34,7 +33,7 @@ class NovelistAgent:
         # 2. グラフ構造の可視化 (Mermaid) - イベントとして送信
         yield {
             "type": "log", 
-            "agent": "system", 
+            "node": "system", 
             "content": f"Workflow Definition:\n{main_workflow.get_graph_mermaid()}"
         }
 
@@ -89,10 +88,10 @@ class NovelistAgent:
     # LLMで回答のドラフトを作成
     #---------------------------------------------------------------------------
     def _create_manuscript(self, state: NodeState):
-        agent_name = "create_manuscript"
+        node_name = "create_manuscript"
 
         # ログの作成
-        yield {"type": "log", "agent": agent_name, "content": "Create draft node start"}
+        yield {"type": "log", "node": node_name, "content": "Create draft node start"}
 
         # 必要なデータを取得
         input_text = state["input"]
@@ -133,25 +132,25 @@ class NovelistAgent:
             response += chunk
             yield {
                 "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer-text", 
+                "node": node_name,
+                "taskId": f"{node_name}-answer-text", 
                 "content": chunk
             }
         
         # 結果の出力 (ログとしてyield)
-        yield {"type": "log", "agent": agent_name, "content": "原稿作成完了"}
+        yield {"type": "log", "node": node_name, "content": "原稿作成完了"}
 
         # 次のノードへの引継ぎ情報 (__state_update__ で返す)
-        yield {"__state_update__": {"manuscript": response}}
+        return {"manuscript": response}
     
     #---------------------------------------------------------------------------
     # LLMでレビューを実施(判定ロジックをPython側に移譲)
     #---------------------------------------------------------------------------
     def _create_review(self, state: NodeState):
-        agent_name = "review"
+        node_name = "review"
 
         # 実行中の表示
-        yield {"type": "log", "agent": agent_name, "content": "Create review node start"}
+        yield {"type": "log", "node": node_name, "content": "Create review node start"}
 
         # 必要なデータを取得
         input_text = state["input"]
@@ -160,7 +159,7 @@ class NovelistAgent:
 
         # 無限ループの回避用
         if retry_count >= 5:
-            yield {"type": "log", "agent": agent_name, "content": f"[Sub: Eval] Max retries ({retry_count}) reached. Approving result."}
+            yield {"type": "log", "node": node_name, "content": f"[Sub: Eval] Max retries ({retry_count}) reached. Approving result."}
             yield {"__state_update__": {
                 "review_judgement": "OK", 
                 "review_advice": [],
@@ -236,13 +235,13 @@ class NovelistAgent:
             # レビュー生成中も表示したい場合はここをコメントアウト解除
             yield {
                "type": "answer_text",
-               "agent": agent_name,
-               "taskId": f"{agent_name}-answer-text", 
+               "node": node_name,
+               "taskId": f"{node_name}-answer-text", 
                "content": chunk
             }
         
         # 結果の出力 (YAMLとして表示) - logとして送出
-        yield {"type": "log", "agent": agent_name, "content": "レビュー生成完了。解析を開始します。"}
+        yield {"type": "log", "node": node_name, "content": "レビュー生成完了。解析を開始します。"}
 
         # レビュー結果のパース(YAMLとしてパース)
         try:
@@ -254,7 +253,7 @@ class NovelistAgent:
             
             review_data = yaml.safe_load(cleaned_response)
         except Exception as e:
-            yield {"type": "log", "agent": agent_name, "content": f"[Error] YAML Parse failed: {e}"}
+            yield {"type": "log", "node": node_name, "content": f"[Error] YAML Parse failed: {e}"}
             review_data = {
                 "scores": {},
                 "advice": ["レビュー解析エラー"]
@@ -308,17 +307,17 @@ class NovelistAgent:
         # ログに判定結果を表示
         yield {
             "type": "log", 
-            "agent": agent_name, 
+            "node": node_name, 
             "content": f"機械判定結果: {final_judgement} (閾値: {pass_threshold}点)\n{formatted_report}"
         }
 
         # 次のノードへの引継ぎ情報
-        yield {"__state_update__": {
+        return {
             "review_judgement": final_judgement,
             "review_report": formatted_report,
             "review_advice": advice_text,
             "retry_count": retry_count + 1
-        }}
+        }
     
     #---------------------------------------------------------------------------
     # チェックノード
@@ -327,7 +326,7 @@ class NovelistAgent:
         """
         レビュー結果を確認し、次のアクションを決定するノード。
         """
-        agent_name = "check_result"
+        node_name = "check_result"
         review_judgement = state.get("review_judgement", "NG")
         
         # 判定ロジック
@@ -338,20 +337,20 @@ class NovelistAgent:
         
         yield {
             "type": "log", 
-            "agent": agent_name, 
+            "node": node_name, 
             "content": f"[Check Node] Judgement: {review_judgement} -> Decision: {decision}"
         }
         
         # 決定内容をステートに保存
-        yield {"__state_update__": {"decision": decision}}
+        return {"decision": decision}
     
     #---------------------------------------------------------------------------
     # プロットを元に小説本文を執筆するノード
     # (注: 現在のグラフ定義では使用されていませんが、形式のみ更新します)
     #---------------------------------------------------------------------------
     def _write_novel_body(self, state: NodeState):
-        agent_name = "write_novel_body"
-        yield {"type": "log", "agent": agent_name, "content": "Write Final Novel Start"}
+        node_name = "write_novel_body"
+        yield {"type": "log", "node": node_name, "content": "Write Final Novel Start"}
 
         # 承認されたプロット(あらすじ)を取得
         approved_plot = state["manuscript"]
@@ -389,20 +388,20 @@ class NovelistAgent:
             response += chunk
             yield {
                 "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer-text", 
+                "node": node_name,
+                "taskId": f"{node_name}-answer-text", 
                 "content": chunk
             }
         
-        yield {"type": "log", "agent": agent_name, "content": "本文執筆完了"}
-        yield {"__state_update__": {"final_novel": response}}
+        yield {"type": "log", "node": node_name, "content": "本文執筆完了"}
+        return {"final_novel": response}
     
     #---------------------------------------------------------------------------
     # 承認済みプロットから「本の裏表紙(Blurb)」を作成するノード
     #---------------------------------------------------------------------------
     def _create_book_blurb(self, state: NodeState):
-        agent_name = "create_book_blurb"
-        yield {"type": "log", "agent": agent_name, "content": "Create Book Blurb Start"}
+        node_name = "create_book_blurb"
+        yield {"type": "log", "node": node_name, "content": "Create Book Blurb Start"}
 
         # 承認されたプロット(全体構成)
         approved_plot = state["manuscript"]
@@ -431,13 +430,13 @@ class NovelistAgent:
             response += chunk
             yield {
                 "type": "answer_text",
-                "agent": agent_name,
-                "taskId": f"{agent_name}-answer-text", 
+                "node": node_name,
+                "taskId": f"{node_name}-answer-text", 
                 "content": chunk
             }
         
-        yield {"type": "log", "agent": agent_name, "content": "Blurb作成完了"}
-        yield {"__state_update__": {"final_novel": response}}
+        yield {"type": "log", "node": node_name, "content": "Blurb作成完了"}
+        return {"final_novel": response}
 
 
 #-----------------------------------------------------------------------
@@ -464,7 +463,7 @@ if __name__ == "__main__":
 
         # ログイベント
         elif event["type"] == "log":
-            print(f"\n[LOG] {event['agent']}: {event['content']}")
+            print(f"\n[LOG] {event['node']}: {event['content']}")
             
         # 画像生成イベント (将来の拡張用)
         elif event["type"] == "images":
