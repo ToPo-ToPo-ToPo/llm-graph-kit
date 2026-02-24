@@ -1,5 +1,5 @@
 # 依存ライブラリのインポート
-from mlx_augllm import MlxLLM 
+from augllm import MlxLLM
 import yaml
 
 # 自作ライブラリのインポート
