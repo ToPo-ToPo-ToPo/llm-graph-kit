@@ -1,11 +1,11 @@
 [project]
 name = "llm-graph-kit"
-version = "0.3.3"
+version = "0.3.4"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13.9"
 dependencies = [
-    "augllm>=2.1.0",
+    "augllm>=2.2.2",
 ]
 
 [project.urls]
