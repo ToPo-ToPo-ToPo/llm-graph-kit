@@ -88,6 +88,24 @@ class LLMGraph:
         if not self.entry_point:
             raise ValueError("Entry point not set.")
 
+        # -------------------------------------------------------
+        # 共通ヘルパー: ノード実行とストリーミング処理
+        # whileループの外で1度だけ定義することで、
+        # イテレーション毎の再定義を避ける
+        # -------------------------------------------------------
+        def execute_node_logic(func, arg):
+            response = func(arg)
+
+            # ジェネレータの場合
+            if inspect.isgenerator(response):
+                # yield された値はそのまま上位へ流し(yield from)、
+                # return された値(StopIterationのvalue)を変数に受け取る
+                return_value = yield from response
+                return return_value
+            else:
+                # 通常関数の場合はそのまま戻り値を返す
+                return response
+
         merge_nodes = self._detect_merge_nodes()
         current_node_name = self.entry_point
         state = initial_state.copy()
@@ -100,22 +118,6 @@ class LLMGraph:
         while current_node_name != self.END:
             if current_node_name not in self.nodes:
                 raise ValueError(f"Node '{current_node_name}' is not defined!")
-
-            # -------------------------------------------------------
-            # 共通ヘルパー: ノード実行とストリーミング処理
-            # -------------------------------------------------------
-            def execute_node_logic(func, arg):
-                response = func(arg)
-                
-                # ジェネレータの場合
-                if inspect.isgenerator(response):
-                    # yield された値はそのまま上位へ流し(yield from)、
-                    # return された値(StopIterationのvalue)を変数に受け取る
-                    return_value = yield from response
-                    return return_value
-                else:
-                    # 通常関数の場合はそのまま戻り値を返す
-                    return response
 
             # -------------------------------------------------------
             # A. マージノードの処理

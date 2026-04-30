@@ -445,8 +445,8 @@ class NovelistAgent:
 if __name__ == "__main__":
 
     # 1. エージェントの構築
-    model_path = "mlx-community/gemma-3-27b-it-4bit"
-    agent = NovelistAgent(model_path=model_path)
+    LLM_PATH = "mlx-community/Qwen3.6-27B-4bit"
+    agent = NovelistAgent(model_path=LLM_PATH)
 
     # 2. 入力
     question = "伝説の野球選手というテーマで小説のあらすじを作成してください。"
