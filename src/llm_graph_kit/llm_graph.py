@@ -23,6 +23,11 @@ class LLMGraph:
 
     def add_node(self, name: str, func: Callable[[NodeState], NodeState]):
         """ノードを登録"""
+        if name in (self.START, self.END):
+            raise ValueError(
+                f"Node name '{name}' is reserved. "
+                f"Use a different name for the node."
+            )
         self.nodes[name] = func
 
     def add_edge(self, from_node: str, to_node: str):
@@ -34,6 +39,12 @@ class LLMGraph:
             from_node: 開始ノード（STARTも使用可能）
             to_node: 終了ノード（ENDも使用可能）
         """
+        if from_node == self.END:
+            raise ValueError(
+                f"Cannot add an edge from '{self.END}'. "
+                f"END is a terminal node."
+            )
+
         if from_node == self.START:
             self.entry_point = to_node
             return
@@ -68,7 +79,8 @@ class LLMGraph:
             return response
 
         state = initial_state.copy()
-        state["__errors__"] = []
+        # 呼び出し側のリストを書き換えないよう、新しいリストにコピー
+        state["__errors__"] = list(initial_state.get("__errors__", []))
         current_node_name = self.entry_point
 
         while current_node_name != self.END:
