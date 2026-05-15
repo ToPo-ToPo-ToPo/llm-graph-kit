@@ -1,4 +1,5 @@
 from typing import Dict, Any, Callable, Union, Tuple
+import copy
 import inspect
 
 # ステートの型定義
@@ -78,9 +79,9 @@ class LLMGraph:
                 return (yield from response)
             return response
 
-        state = initial_state.copy()
-        # 呼び出し側のリストを書き換えないよう、新しいリストにコピー
-        state["__errors__"] = list(initial_state.get("__errors__", []))
+        # 呼び出し側のオブジェクトに副作用を残さないよう、ネスト構造ごと複製する
+        state = copy.deepcopy(initial_state)
+        state.setdefault("__errors__", [])
         current_node_name = self.entry_point
 
         while current_node_name != self.END:

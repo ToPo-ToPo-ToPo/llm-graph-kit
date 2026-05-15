@@ -142,6 +142,42 @@ class TestGraphExecution(unittest.TestCase):
         g.add_edge(LLMGraph.START, "ok")
         list(g.run({}))
 
+    def test_nested_mutable_values_in_caller_are_not_mutated(self):
+        # state 内の入れ子のリスト/辞書がノード内で書き換えられても、
+        # 呼び出し側のオブジェクトには反映されないこと（deepcopy 保証）
+        def mutate(state: NodeState):
+            state["history"].append("from_node")
+            state["config"]["retry"] = 999
+            return {}
+
+        g = LLMGraph()
+        g.add_node("mutate", mutate)
+        g.add_edge(LLMGraph.START, "mutate")
+
+        caller_history = ["initial"]
+        caller_config = {"retry": 3}
+        list(g.run({"history": caller_history, "config": caller_config}))
+
+        self.assertEqual(caller_history, ["initial"])
+        self.assertEqual(caller_config, {"retry": 3})
+
+    def test_same_initial_state_can_be_reused_across_runs(self):
+        # 同じ initial_state を 2 回 run() に渡しても、
+        # 1回目の副作用が 2回目に影響しないこと
+        def append_once(state: NodeState):
+            state["history"].append("x")
+            return {}
+
+        g = LLMGraph()
+        g.add_node("a", append_once)
+        g.add_edge(LLMGraph.START, "a")
+
+        initial = {"history": []}
+        list(g.run(initial))
+        list(g.run(initial))
+
+        self.assertEqual(initial["history"], [])
+
 
 # ---------------------------------------------------------------------------
 # 3. 条件分岐
