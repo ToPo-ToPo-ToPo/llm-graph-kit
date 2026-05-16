@@ -8,6 +8,7 @@ LLMGraph 本体の動作確認用テスト（LLM 非依存）。
 """
 import unittest
 import warnings
+from enum import Enum
 from typing import TypedDict, Optional
 
 from src.llm_graph_kit import LLMGraph, NodeState
@@ -389,6 +390,56 @@ class TestConditionalEdges(unittest.TestCase):
         list(g.run({"decision": "unknown"}))
         self.assertEqual(reached, [])
 
+    def test_conditional_routes_by_enum_name(self):
+        # Enum メンバーを signal にした場合、その .name で path_map と照合される
+        class Decision(Enum):
+            RETRY = "retry"
+            COMPLETE = "complete"
+
+        reached = []
+
+        def a(state: NodeState):
+            reached.append("a")
+            return {"decision": Decision.COMPLETE}
+
+        def done(state: NodeState):
+            reached.append("done")
+            return {}
+
+        g = LLMGraph()
+        g.add_node("a", a)
+        g.add_node("done", done)
+        g.add_edge(LLMGraph.START, "a")
+        g.add_conditional_edge("a", "decision", {"COMPLETE": "done", "RETRY": "a"})
+        g.add_edge("done", LLMGraph.END)
+
+        list(g.run({}))
+        self.assertEqual(reached, ["a", "done"])
+
+    def test_conditional_routes_when_path_map_keys_are_enum(self):
+        # path_map のキー側に Enum を渡しても、名前で照合される
+        class Sig(Enum):
+            GO = 1
+
+        reached = []
+
+        def a(state: NodeState):
+            return {"d": Sig.GO}
+
+        def next_node(state: NodeState):
+            reached.append("next_node")
+            return {}
+
+        g = LLMGraph()
+        g.add_node("a", a)
+        g.add_node("next_node", next_node)
+        g.add_edge(LLMGraph.START, "a")
+        g.add_conditional_edge("a", "d", {Sig.GO: "next_node"})
+        g.add_edge("next_node", LLMGraph.END)
+
+        list(g.run({}))
+        self.assertEqual(reached, ["next_node"])
+
     def test_conditional_to_end_explicitly(self):
         g, reached = self._build_router_graph("decision", {"stop": LLMGraph.END})
         list(g.run({"decision": "stop"}))
@@ -422,8 +473,19 @@ class TestMermaidOutput(unittest.TestCase):
         g.add_conditional_edge("router", "d", {"x": "x"})
 
         mermaid = g.get_graph_mermaid()
-        self.assertIn("router{router}", mermaid)  # 菱形
+        self.assertIn('router{"router"}', mermaid)  # 菱形＋引用符ラベル
         self.assertIn("router -- x --> x", mermaid)
+
+    def test_mermaid_label_escapes_special_chars(self):
+        # ノード名にブラケットや引用符が含まれていてもラベルが壊れない
+        g = LLMGraph()
+        g.add_node("step_one", lambda s: {})
+        g.add_edge(LLMGraph.START, "step_one")
+        g.add_edge("step_one", LLMGraph.END)
+
+        mermaid = g.get_graph_mermaid()
+        # 二重引用符で囲まれているはず
+        self.assertIn('step_one["step_one"]', mermaid)
 
 
 # ---------------------------------------------------------------------------

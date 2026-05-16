@@ -1,10 +1,21 @@
-from typing import Dict, Any, Callable, Union, Tuple, Type, Optional, FrozenSet, Set
+from typing import Dict, Any, Callable, Union, Tuple, Type, Optional, FrozenSet, Set, Generator
+from enum import Enum
 import copy
 import inspect
 import warnings
 
 # ステートの型定義
 NodeState = Dict[str, Any]
+
+# ノード関数のシグネチャ。通常関数（dict 戻り）でも、イベントを yield する
+# ジェネレータでもよい。最終的な state 更新は dict（または None）で返す。
+NodeFunc = Callable[
+    [NodeState],
+    Union[
+        Optional[NodeState],
+        Generator[Any, None, Optional[NodeState]],
+    ],
+]
 
 
 class LLMGraph:
@@ -34,7 +45,7 @@ class LLMGraph:
     RESERVED_STATE_KEYS: FrozenSet[str] = frozenset({"__errors__"})
 
     def __init__(self, state_schema: Optional[Type] = None):
-        self.nodes: Dict[str, Callable[[NodeState], NodeState]] = {}
+        self.nodes: Dict[str, NodeFunc] = {}
         # from_node -> to_node の単一エッジ
         self.edges: Dict[str, str] = {}
         # 条件付きエッジ: from_node -> (condition, path_map)
@@ -97,9 +108,28 @@ class LLMGraph:
             )
 
     # ------------------------------------------------------------------
+    # ルーティング/可視化ユーティリティ
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _normalize_signal(signal: Any) -> str:
+        """条件分岐の signal を path_map のキーと照合可能な文字列へ正規化する。
+
+        - Enum メンバーは .name を返す（例: Decision.RETRY -> "RETRY"）。
+        - それ以外は str() を返す。
+        """
+        if isinstance(signal, Enum):
+            return signal.name
+        return str(signal)
+
+    @staticmethod
+    def _mermaid_label(name: Any) -> str:
+        """Mermaid のラベル用に文字列を二重引用符で囲み、内部の "を HTML エスケープする。"""
+        return '"' + str(name).replace('"', '&quot;') + '"'
+
+    # ------------------------------------------------------------------
     # 構築
     # ------------------------------------------------------------------
-    def add_node(self, name: str, func: Callable[[NodeState], NodeState]):
+    def add_node(self, name: str, func: NodeFunc):
         """ノードを登録"""
         if name in (self.START, self.END):
             raise ValueError(
@@ -294,11 +324,11 @@ class LLMGraph:
             if current_node_name in self.conditional_edges:
                 condition, path_map = self.conditional_edges[current_node_name]
                 signal = condition(state) if callable(condition) else state.get(condition)
-                signal_str = str(signal).split('.')[-1] if hasattr(signal, 'name') else str(signal)
+                signal_str = self._normalize_signal(signal)
 
                 next_dest = None
                 for key, val in path_map.items():
-                    if str(key) == signal_str:
+                    if self._normalize_signal(key) == signal_str:
                         next_dest = val
                         break
                 current_node_name = next_dest if next_dest else self.END
@@ -324,12 +354,14 @@ class LLMGraph:
         lines.append(f"  {self.START}(START):::startClass")
         lines.append(f"  {self.END}(END):::endClass")
 
-        # ノード描画（条件分岐は菱形、通常は矩形）
+        # ノード描画（条件分岐は菱形、通常は矩形）。ラベルは常に二重引用符で囲み、
+        # 名前に含まれる特殊文字（[ ] { } - など）が Mermaid 構文を壊さないようにする
         for node in self.nodes:
+            label = self._mermaid_label(node)
             if node in self.conditional_edges:
-                lines.append(f"  {node}{{{node}}}:::routerClass")
+                lines.append(f"  {node}{{{label}}}:::routerClass")
             else:
-                lines.append(f"  {node}[{node}]:::nodeClass")
+                lines.append(f"  {node}[{label}]:::nodeClass")
 
         # エントリーポイント
         if self.entry_point:
@@ -340,9 +372,9 @@ class LLMGraph:
             lines.append(f"  {from_node} --> {to_node}")
 
         # 条件付きエッジ
-        for from_node, (condition, path_map) in self.conditional_edges.items():
+        for from_node, (_condition, path_map) in self.conditional_edges.items():
             for signal, to_node in path_map.items():
-                signal_label = str(signal).split('.')[-1]
+                signal_label = self._normalize_signal(signal)
                 lines.append(f"  {from_node} -- {signal_label} --> {to_node}")
 
         return "\n".join(lines)
