@@ -155,12 +155,66 @@ class LLMGraph:
         self.conditional_edges[from_node] = (condition, path_map)
 
     # ------------------------------------------------------------------
+    # 実行前検証
+    # ------------------------------------------------------------------
+    def _validate_graph(self) -> None:
+        """run() 開始前にグラフ構造の整合性を検証する。
+
+        - entry_point が登録済みノードを指していること
+        - edges / conditional_edges の遷移先がすべて登録済みノードか END であること
+        """
+        valid_targets = set(self.nodes.keys()) | {self.END}
+
+        if self.entry_point not in valid_targets:
+            raise ValueError(
+                f"Entry point '{self.entry_point}' is not a registered node. "
+                f"Registered: {sorted(self.nodes.keys())}"
+            )
+
+        for from_node, to_node in self.edges.items():
+            if from_node not in self.nodes:
+                raise ValueError(
+                    f"Edge source '{from_node}' is not a registered node. "
+                    f"Registered: {sorted(self.nodes.keys())}"
+                )
+            if to_node not in valid_targets:
+                raise ValueError(
+                    f"Edge target '{to_node}' (from '{from_node}') is not a "
+                    f"registered node. Registered: {sorted(self.nodes.keys())}"
+                )
+
+        for from_node, (_condition, path_map) in self.conditional_edges.items():
+            if from_node not in self.nodes:
+                raise ValueError(
+                    f"Conditional edge source '{from_node}' is not a registered node. "
+                    f"Registered: {sorted(self.nodes.keys())}"
+                )
+            for signal, to_node in path_map.items():
+                if to_node not in valid_targets:
+                    raise ValueError(
+                        f"Conditional edge target '{to_node}' (from '{from_node}', "
+                        f"signal '{signal}') is not a registered node. "
+                        f"Registered: {sorted(self.nodes.keys())}"
+                    )
+
+    # ------------------------------------------------------------------
     # 実行
     # ------------------------------------------------------------------
-    def run(self, initial_state: NodeState):
-        """グラフを実行（ジェネレータとして動作）"""
+    def run(self, initial_state: NodeState, max_steps: int = 100):
+        """グラフを実行（ジェネレータとして動作）
+
+        Args:
+            initial_state: 初期ステート。
+            max_steps: 実行するノード数の上限。サイクルによる無限ループを防止する。
+                超えた場合は RuntimeError を送出する。
+        """
         if not self.entry_point:
             raise ValueError("Entry point not set.")
+        if not isinstance(max_steps, int) or max_steps < 1:
+            raise ValueError(f"max_steps must be a positive int, got {max_steps!r}.")
+
+        # 構造（ノード参照）を実行前に一括検証
+        self._validate_graph()
 
         # 初期 state も検査対象（予約キー書き込み禁止 + スキーマ整合）
         self._check_reserved_write(initial_state, "initial_state")
@@ -178,10 +232,17 @@ class LLMGraph:
         state = copy.deepcopy(initial_state)
         state.setdefault("__errors__", [])
         current_node_name = self.entry_point
+        step = 0
 
         while current_node_name != self.END:
-            if current_node_name not in self.nodes:
-                raise ValueError(f"Node '{current_node_name}' is not defined!")
+            # 無限ループ防止: 1 ノード実行を 1 ステップとしてカウント
+            if step >= max_steps:
+                raise RuntimeError(
+                    f"Graph execution exceeded max_steps={max_steps} at node "
+                    f"'{current_node_name}'. Possible infinite loop. "
+                    f"Pass a larger max_steps to run() if legitimate."
+                )
+            step += 1
 
             node_func = self.nodes[current_node_name]
             result = None
@@ -191,8 +252,13 @@ class LLMGraph:
                 state["__errors__"].append(f"Error in {current_node_name}: {str(e)}")
                 yield {"type": "error", "agent": current_node_name, "content": str(e)}
 
-            # スキーマ違反は捕捉せず即時に例外を伝播させる
-            if result:
+            # 戻り値の型と内容を検証（スキーマ違反は即時に伝播）
+            if result is not None:
+                if not isinstance(result, dict):
+                    raise TypeError(
+                        f"Node '{current_node_name}' must return a dict or None, "
+                        f"got {type(result).__name__}."
+                    )
                 context = f"node '{current_node_name}' return value"
                 self._check_reserved_write(result, context)
                 self._check_schema(result, context)

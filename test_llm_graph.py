@@ -66,8 +66,108 @@ class TestGraphExecution(unittest.TestCase):
         g.add_node("a", lambda s: {})
         g.add_edge(LLMGraph.START, "a")
         g.add_edge("a", "ghost")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as ctx:
             list(g.run({}))
+        # 実行に入る前（"a" が呼ばれる前）にグラフ整合性検証で失敗する
+        self.assertIn("ghost", str(ctx.exception))
+
+    def test_run_with_undefined_conditional_target_raises_before_execution(self):
+        # path_map の遷移先が未登録ノードなら、ノードを 1 つも実行せずに失敗する
+        executed = []
+
+        def a(state: NodeState):
+            executed.append("a")
+            return {"decision": "go"}
+
+        g = LLMGraph()
+        g.add_node("a", a)
+        g.add_edge(LLMGraph.START, "a")
+        g.add_conditional_edge("a", "decision", {"go": "ghost"})
+        with self.assertRaises(ValueError) as ctx:
+            list(g.run({}))
+        self.assertIn("ghost", str(ctx.exception))
+        self.assertEqual(executed, [])  # 構築不正なら一切実行しない
+
+    def test_run_with_undefined_entry_point_raises_before_execution(self):
+        g = LLMGraph()
+        g.add_node("a", lambda s: {})
+        # START から登録されていない "b" を指す
+        g.add_edge(LLMGraph.START, "b")
+        with self.assertRaises(ValueError) as ctx:
+            list(g.run({}))
+        self.assertIn("b", str(ctx.exception))
+
+    def test_max_steps_default_catches_infinite_loop(self):
+        # 常に "retry" を返し続けるグラフ → デフォルト max_steps で打ち切られる
+        def a(state: NodeState):
+            return {"decision": "retry"}
+
+        g = LLMGraph()
+        g.add_node("a", a)
+        g.add_edge(LLMGraph.START, "a")
+        g.add_conditional_edge("a", "decision", {"retry": "a"})
+        with self.assertRaises(RuntimeError) as ctx:
+            list(g.run({}))
+        self.assertIn("max_steps", str(ctx.exception))
+
+    def test_max_steps_can_be_overridden(self):
+        # max_steps=3 でちょうど 3 回実行されて打ち切られる
+        count = {"n": 0}
+
+        def a(state: NodeState):
+            count["n"] += 1
+            return {"decision": "retry"}
+
+        g = LLMGraph()
+        g.add_node("a", a)
+        g.add_edge(LLMGraph.START, "a")
+        g.add_conditional_edge("a", "decision", {"retry": "a"})
+        with self.assertRaises(RuntimeError):
+            list(g.run({}, max_steps=3))
+        self.assertEqual(count["n"], 3)
+
+    def test_max_steps_invalid_value_raises(self):
+        g = LLMGraph()
+        g.add_node("a", lambda s: {})
+        g.add_edge(LLMGraph.START, "a")
+        g.add_edge("a", LLMGraph.END)
+        with self.assertRaises(ValueError):
+            list(g.run({}, max_steps=0))
+        with self.assertRaises(ValueError):
+            list(g.run({}, max_steps=-1))
+
+    def test_node_returning_non_dict_raises_type_error(self):
+        # 文字列を return してしまった場合に分かりやすい TypeError を出す
+        def bad(state: NodeState):
+            return "oops, forgot to wrap in dict"
+
+        g = LLMGraph()
+        g.add_node("bad", bad)
+        g.add_edge(LLMGraph.START, "bad")
+        with self.assertRaises(TypeError) as ctx:
+            list(g.run({}))
+        msg = str(ctx.exception)
+        self.assertIn("bad", msg)
+        self.assertIn("dict", msg)
+
+    def test_node_returning_none_is_accepted(self):
+        # ノードが何も返さない (None) のは正常
+        def silent(state: NodeState):
+            pass  # 暗黙の return None
+
+        g = LLMGraph()
+        g.add_node("silent", silent)
+        g.add_edge(LLMGraph.START, "silent")
+        events = list(g.run({}))
+        self.assertEqual(events, [])
+
+    def test_node_returning_empty_dict_is_accepted(self):
+        # 空 dict も正常 (no-op update)
+        g = LLMGraph()
+        g.add_node("a", lambda s: {})
+        g.add_edge(LLMGraph.START, "a")
+        events = list(g.run({}))
+        self.assertEqual(events, [])
 
     def test_sequential_execution_threads_state_between_nodes(self):
         captured = {}
