@@ -7,9 +7,18 @@ LLMGraph 本体の動作確認用テスト（LLM 非依存）。
     python test_llm_graph.py
 """
 import unittest
+import warnings
 from typing import TypedDict, Optional
 
 from src.llm_graph_kit import LLMGraph, NodeState
+
+# state_schema 未指定の DeprecationWarning は、検証する個別テスト以外では
+# 出力を汚さないよう抑制する（assertWarns は自前で catch_warnings するため影響なし）
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r"Creating LLMGraph without state_schema is deprecated",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +374,26 @@ class TestStateSchema(unittest.TestCase):
         g.add_edge(LLMGraph.START, "a")
         events = list(g.run({"foo": "bar"}))
         self.assertEqual(events, [])
+
+
+# ---------------------------------------------------------------------------
+# 6. 非推奨警告
+# ---------------------------------------------------------------------------
+class TestDeprecation(unittest.TestCase):
+
+    def test_warns_when_no_state_schema_provided(self):
+        with self.assertWarns(DeprecationWarning) as ctx:
+            LLMGraph()
+        self.assertIn("state_schema", str(ctx.warning))
+
+    def test_no_warning_when_state_schema_provided(self):
+        class S(TypedDict, total=False):
+            x: str
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            # state_schema を渡せば警告は出ない（出れば例外になりテスト失敗）
+            LLMGraph(state_schema=S)
 
 
 if __name__ == "__main__":

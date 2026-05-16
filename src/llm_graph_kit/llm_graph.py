@@ -1,6 +1,7 @@
 from typing import Dict, Any, Callable, Union, Tuple, Type, Optional, FrozenSet, Set
 import copy
 import inspect
+import warnings
 
 # ステートの型定義
 NodeState = Dict[str, Any]
@@ -40,6 +41,18 @@ class LLMGraph:
         self.conditional_edges: Dict[str, Tuple[Union[Callable, str], Dict[str, str]]] = {}
         self.entry_point: str = ""
         self.state_schema = state_schema
+
+        # state_schema は将来必須になる予定。スキーマなしの構築は非推奨
+        if state_schema is None:
+            warnings.warn(
+                "Creating LLMGraph without state_schema is deprecated and will "
+                "be removed in a future version. Declare a TypedDict (or any "
+                "class with __annotations__) and pass it as state_schema to "
+                "enable runtime key validation and static type checking. "
+                "See example_with_schema.py.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         # スキーマから許可キーを解決
         self._allowed_keys: Optional[Set[str]] = None
