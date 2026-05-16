@@ -50,6 +50,49 @@ class TestGraphConstruction(unittest.TestCase):
         g.add_edge(LLMGraph.START, "first")
         self.assertEqual(g.entry_point, "first")
 
+    def test_duplicate_add_node_is_rejected(self):
+        g = LLMGraph()
+        g.add_node("a", lambda s: {})
+        with self.assertRaises(ValueError) as ctx:
+            g.add_node("a", lambda s: {"x": 1})
+        self.assertIn("a", str(ctx.exception))
+        self.assertIn("already registered", str(ctx.exception))
+
+    def test_double_start_edge_is_rejected(self):
+        # entry_point の黙々上書きを防止
+        g = LLMGraph()
+        g.add_node("a", lambda s: {})
+        g.add_node("b", lambda s: {})
+        g.add_edge(LLMGraph.START, "a")
+        with self.assertRaises(ValueError) as ctx:
+            g.add_edge(LLMGraph.START, "b")
+        self.assertIn("already set", str(ctx.exception))
+        # 最初の entry_point は保持されている
+        self.assertEqual(g.entry_point, "a")
+
+    def test_duplicate_conditional_edge_is_rejected(self):
+        g = LLMGraph()
+        g.add_node("a", lambda s: {"decision": "x"})
+        g.add_conditional_edge("a", "decision", {"x": LLMGraph.END})
+        with self.assertRaises(ValueError):
+            g.add_conditional_edge("a", "decision", {"y": LLMGraph.END})
+
+    def test_regular_then_conditional_edge_from_same_node_is_rejected(self):
+        g = LLMGraph()
+        g.add_node("a", lambda s: {"decision": "x"})
+        g.add_edge("a", "b")
+        with self.assertRaises(ValueError) as ctx:
+            g.add_conditional_edge("a", "decision", {"x": LLMGraph.END})
+        self.assertIn("regular edge", str(ctx.exception))
+
+    def test_conditional_then_regular_edge_from_same_node_is_rejected(self):
+        g = LLMGraph()
+        g.add_node("a", lambda s: {"decision": "x"})
+        g.add_conditional_edge("a", "decision", {"x": LLMGraph.END})
+        with self.assertRaises(ValueError) as ctx:
+            g.add_edge("a", "b")
+        self.assertIn("conditional edge", str(ctx.exception))
+
 
 # ---------------------------------------------------------------------------
 # 2. グラフ実行時の挙動

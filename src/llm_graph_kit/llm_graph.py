@@ -106,6 +106,11 @@ class LLMGraph:
                 f"Node name '{name}' is reserved. "
                 f"Use a different name for the node."
             )
+        if name in self.nodes:
+            raise ValueError(
+                f"Node '{name}' is already registered. "
+                f"Each node must have a unique name."
+            )
         self.nodes[name] = func
 
     def add_edge(self, from_node: str, to_node: str):
@@ -124,9 +129,19 @@ class LLMGraph:
             )
 
         if from_node == self.START:
+            if self.entry_point:
+                raise ValueError(
+                    f"Entry point is already set to '{self.entry_point}'. "
+                    f"Cannot reassign START -> '{to_node}'."
+                )
             self.entry_point = to_node
             return
 
+        if from_node in self.conditional_edges:
+            raise ValueError(
+                f"Node '{from_node}' already has a conditional edge. "
+                f"A node cannot have both a regular edge and a conditional edge."
+            )
         if from_node in self.edges:
             raise ValueError(
                 f"Edge from '{from_node}' already exists. "
@@ -151,6 +166,17 @@ class LLMGraph:
             raise ValueError(
                 f"Conditional edge condition key '{condition}' is not in state_schema. "
                 f"Declared keys: {declared}"
+            )
+
+        if from_node in self.conditional_edges:
+            raise ValueError(
+                f"Conditional edge from '{from_node}' already exists. "
+                f"Each node can have at most one conditional edge."
+            )
+        if from_node in self.edges:
+            raise ValueError(
+                f"Node '{from_node}' already has a regular edge. "
+                f"A node cannot have both a regular edge and a conditional edge."
             )
         self.conditional_edges[from_node] = (condition, path_map)
 
