@@ -7,6 +7,7 @@ LLMGraph 本体の動作確認用テスト（LLM 非依存）。
     python test_llm_graph.py
 """
 import unittest
+from typing import TypedDict, Optional
 
 from src.llm_graph_kit import LLMGraph, NodeState
 
@@ -122,18 +123,26 @@ class TestGraphExecution(unittest.TestCase):
             [{"type": "error", "agent": "boom", "content": "err1"}],
         )
 
-    def test_callers_errors_list_is_not_mutated(self):
-        def boom(state: NodeState):
-            raise RuntimeError("err1")
+    def test_initial_state_cannot_carry_reserved_keys(self):
+        # __errors__ はライブラリ管理の予約キー。呼び出し側は initial_state に入れられない
+        g = LLMGraph()
+        g.add_node("ok", lambda s: {"done": True})
+        g.add_edge(LLMGraph.START, "ok")
+        with self.assertRaises(ValueError) as ctx:
+            list(g.run({"__errors__": ["pre"]}))
+        self.assertIn("__errors__", str(ctx.exception))
+
+    def test_node_cannot_overwrite_reserved_keys(self):
+        # ノード戻り値で __errors__ を返すのも禁止
+        def bad(state: NodeState):
+            return {"__errors__": ["clobber"]}
 
         g = LLMGraph()
-        g.add_node("boom", boom)
-        g.add_edge(LLMGraph.START, "boom")
-
-        caller_list = ["pre-existing"]
-        list(g.run({"__errors__": caller_list}))
-        # 呼び出し側のリストは変更されない
-        self.assertEqual(caller_list, ["pre-existing"])
+        g.add_node("bad", bad)
+        g.add_edge(LLMGraph.START, "bad")
+        with self.assertRaises(ValueError) as ctx:
+            list(g.run({}))
+        self.assertIn("__errors__", str(ctx.exception))
 
     def test_default_errors_key_is_initialized(self):
         # 初期 state に __errors__ がなくても例外なく実行できる
@@ -188,7 +197,8 @@ class TestConditionalEdges(unittest.TestCase):
         reached = []
 
         def router(state: NodeState):
-            return state  # 入力をそのまま返す
+            # state はそのまま使い、更新は不要
+            return {}
 
         def a(state: NodeState):
             reached.append("a")
@@ -262,6 +272,99 @@ class TestMermaidOutput(unittest.TestCase):
         mermaid = g.get_graph_mermaid()
         self.assertIn("router{router}", mermaid)  # 菱形
         self.assertIn("router -- x --> x", mermaid)
+
+
+# ---------------------------------------------------------------------------
+# 5. state_schema による制約
+# ---------------------------------------------------------------------------
+class MyState(TypedDict, total=False):
+    input: str
+    plan: Optional[str]
+    decision: str
+
+
+class TestStateSchema(unittest.TestCase):
+
+    def test_schema_with_no_fields_is_rejected(self):
+        class Empty(TypedDict, total=False):
+            pass
+        with self.assertRaises(ValueError):
+            LLMGraph(state_schema=Empty)
+
+    def test_schema_cannot_declare_reserved_key(self):
+        class Bad(TypedDict, total=False):
+            __errors__: list
+        with self.assertRaises(ValueError) as ctx:
+            LLMGraph(state_schema=Bad)
+        self.assertIn("__errors__", str(ctx.exception))
+
+    def test_initial_state_unknown_key_is_rejected(self):
+        g = LLMGraph(state_schema=MyState)
+        g.add_node("a", lambda s: {})
+        g.add_edge(LLMGraph.START, "a")
+        with self.assertRaises(ValueError) as ctx:
+            list(g.run({"input": "x", "unknown": 1}))
+        self.assertIn("unknown", str(ctx.exception))
+
+    def test_initial_state_declared_keys_pass(self):
+        g = LLMGraph(state_schema=MyState)
+        g.add_node("a", lambda s: {})
+        g.add_edge(LLMGraph.START, "a")
+        # 例外が出ないこと
+        list(g.run({"input": "x"}))
+
+    def test_node_return_unknown_key_is_rejected(self):
+        # ノード戻り値の未宣言キーは即座に例外
+        def bad(state: NodeState):
+            return {"typo_plan": "oops"}
+
+        g = LLMGraph(state_schema=MyState)
+        g.add_node("bad", bad)
+        g.add_edge(LLMGraph.START, "bad")
+        with self.assertRaises(ValueError) as ctx:
+            list(g.run({"input": "x"}))
+        self.assertIn("typo_plan", str(ctx.exception))
+
+    def test_node_return_declared_keys_pass(self):
+        def good(state: NodeState):
+            return {"plan": "ok"}
+
+        g = LLMGraph(state_schema=MyState)
+        g.add_node("good", good)
+        g.add_edge(LLMGraph.START, "good")
+        list(g.run({"input": "x"}))
+
+    def test_conditional_condition_unknown_key_is_rejected(self):
+        # add_conditional_edge の condition 文字列がスキーマと整合しない場合
+        g = LLMGraph(state_schema=MyState)
+        g.add_node("a", lambda s: {"decision": "x"})
+        g.add_edge(LLMGraph.START, "a")
+        with self.assertRaises(ValueError) as ctx:
+            g.add_conditional_edge("a", "dcision", {"x": LLMGraph.END})
+        self.assertIn("dcision", str(ctx.exception))
+
+    def test_conditional_condition_declared_key_passes(self):
+        g = LLMGraph(state_schema=MyState)
+        g.add_node("a", lambda s: {"decision": "stop"})
+        g.add_edge(LLMGraph.START, "a")
+        g.add_conditional_edge("a", "decision", {"stop": LLMGraph.END})
+        list(g.run({"input": "x"}))
+
+    def test_conditional_condition_callable_is_unaffected_by_schema(self):
+        # callable condition はスキーマ検査の対象外
+        g = LLMGraph(state_schema=MyState)
+        g.add_node("a", lambda s: {"plan": "ok"})
+        g.add_edge(LLMGraph.START, "a")
+        g.add_conditional_edge("a", lambda s: "done", {"done": LLMGraph.END})
+        list(g.run({"input": "x"}))
+
+    def test_no_schema_preserves_freeform_behavior(self):
+        # state_schema=None なら従来通り何でも入る（後方互換）
+        g = LLMGraph()
+        g.add_node("a", lambda s: {"any_key": 1, "another": [1, 2]})
+        g.add_edge(LLMGraph.START, "a")
+        events = list(g.run({"foo": "bar"}))
+        self.assertEqual(events, [])
 
 
 if __name__ == "__main__":
