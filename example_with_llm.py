@@ -40,9 +40,8 @@ class QAAgent:
     # --------------------------------------------------
     # 初期化
     # --------------------------------------------------
-    def __init__(self, model_path: str) -> None:
-        print(f"Loading Model: {model_path} ...")
-        self.llm = MlxLLM(model_path=model_path)
+    def __init__(self, llm) -> None:
+        self.llm = llm
 
     # --------------------------------------------------
     # 公開エントリポイント
@@ -141,7 +140,8 @@ class QAAgent:
 if __name__ == "__main__":
     # 1. エージェントを構築
     LLM_PATH = "mlx-community/Qwen3.6-27B-4bit"
-    agent = QAAgent(model_path=LLM_PATH)
+    llm = MlxLLM(model_path=LLM_PATH)
+    agent = QAAgent(llm=llm)
 
     # 2. 入力
     question = "地球の半径は何 km?"
