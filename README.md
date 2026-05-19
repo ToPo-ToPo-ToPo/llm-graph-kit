@@ -214,7 +214,7 @@ def my_node(state: NodeState):
 
 ## サンプル 1: シンプルなカウンタ（LLM 非依存）
 
-リポジトリの [`example_with_schema.py`](./example_with_schema.py) と同じものです。3 回ループしてから終端ノードに進むグラフと、スキーマ違反の挙動デモを含みます。
+リポジトリの [`example_with_schema.py`](./example_with_schema.py) と同じものです。3 回ループしてから終端ノードに進むグラフです。
 
 ```python
 """
@@ -318,10 +318,9 @@ if __name__ == "__main__":
     main()
 ```
 
-実行例:
+実行例（このサンプルはノードが `yield` しないため、中間イベントはなく最終 state のみが得られます）:
 
 ```
-event: {'count': 0, 'history': ['started with input=hello']}      # ← yieldしていないので実際は出ない
 --- final state ---
   input: hello
   __errors__: []
@@ -331,362 +330,97 @@ event: {'count': 0, 'history': ['started with input=hello']}      # ← yieldし
   final_message: completed after 3 ticks
 ```
 
-（上記サンプルはノードが `yield` しないため、`run()` から流れる中間イベントはなく、最終 state のみが取得されます。）
+## サンプル 2: LLM を使う最小例（リトライ付き）
 
-## サンプル 2: LLM を使った小説執筆エージェント
-
-リポジトリの [`test_novelist.py`](./test_novelist.py) と同じものです。
-`augllm.MlxLLM` で LLM を呼び出し、原稿作成 → レビュー → 判定 → リトライまたは最終出力、という分岐付きのグラフを構築します。LLM ストリーミングのチャンクを `yield` してそのまま CLI に流す典型例です。
+リポジトリの [`example_with_llm.py`](./example_with_llm.py) と同じものです。
+「質問に答える → 答えをチェック → 短ければやり直す」という 2 段のグラフを構築します。LLM のストリーミングチャンクを `yield` でそのまま呼び出し側へ流す典型例です。
 
 ```python
-# 依存ライブラリのインポート
-from augllm import MlxLLM
-import yaml
+"""
+LLM を使った最小サンプル。
 
-# 自作ライブラリのインポート
+質問に答えるノードと、答えをチェックするノードからなる 2 段グラフ。
+チェックで「短すぎる」と判定されたらやり直す。最大 3 回でループを抜ける。
+
+実行:
+    python example_with_llm.py
+"""
+from typing import TypedDict
+
+from augllm import MlxLLM
+
 from llm_graph_kit import LLMGraph, NodeState
 
-#-----------------------------------------------------------------------
-# エージェントクラス
-#-----------------------------------------------------------------------
-class NovelistAgent:
 
-    #--------------------------------------------------
-    # 初期化
-    #--------------------------------------------------
-    def __init__(self, model_path: str) -> None:
-        # LLMの初期化
-        print(f"Loading Model: {model_path} ...")
-        self.llm = MlxLLM(model_path=model_path)
+# ---------------------------------------------------------------------------
+# ステートのスキーマ
+# ---------------------------------------------------------------------------
+class QAState(TypedDict, total=False):
+    question: str
+    answer: str
+    attempts: int
+    decision: str
 
-    #---------------------------------------------------------------------------
-    # エージェントを実行 (メインエントリポイント)
-    #---------------------------------------------------------------------------
-    def run(self, question: str):
-        """
-        ジェネレータを返すように変更。
-        呼び出し元でforループを回して結果を取得する。
-        """
 
-        # 1. メイングラフの構築
-        main_workflow = self.create_main_graph()
+# ---------------------------------------------------------------------------
+# グラフ構築(LLM を受け取り、ノード関数にクロージャで埋め込む)
+# ---------------------------------------------------------------------------
+def build_qa_graph(llm: MlxLLM) -> LLMGraph:
 
-        # 2. グラフ構造の可視化 (Mermaid) - イベントとして送信
-        yield {
-            "type": "log",
-            "node": "system",
-            "content": f"Workflow Definition:\n{main_workflow.get_graph_mermaid()}"
-        }
+    def answer_node(state: NodeState):
+        # LLM のチャンクをそのまま呼び出し側へストリーミング
+        prompt = f"質問: {state['question']}\n簡潔に答えてください。"
+        text = ""
+        for chunk in llm.respond(system_prompt="", user_text=prompt, stream=True):
+            text += chunk
+            yield {"type": "answer_text", "content": chunk}
+        return {"answer": text, "attempts": state.get("attempts", 0) + 1}
 
-        # 3. ワークフローの実行
-        initial_input = {"input": question}
-
-        # 【修正箇所】return ではなく yield from を使用して、下位ジェネレータの値を流す
-        yield from main_workflow.run(initial_input)
-
-    #---------------------------------------------------------------------------
-    # メイングラフの定義
-    #---------------------------------------------------------------------------
-    def create_main_graph(self) -> LLMGraph:
-        """
-        メインのワークフローを定義します。
-        """
-        workflow = LLMGraph()
-
-        # ノード登録
-        workflow.add_node(name="create_manuscript", func=self._create_manuscript)
-        workflow.add_node(name="review", func=self._create_review)
-        workflow.add_node(name="check_result", func=self._check_result_node)
-        workflow.add_node(name="create_book_blurb", func=self._create_book_blurb)
-
-        # エッジ定義
-        workflow.add_edge(LLMGraph.START, "create_manuscript")
-        workflow.add_edge("create_manuscript", "review")
-        workflow.add_edge("review", "check_result")
-
-        # 条件付きエッジ
-        workflow.add_conditional_edge(
-            "check_result",
-            "decision",
-            {
-                "retry": "create_manuscript",
-                "complete": "create_book_blurb"
-            }
-        )
-
-        workflow.add_edge("create_book_blurb", LLMGraph.END)
-
-        return workflow
-
-    #---------------------------------------------------------------------------
-    # LLMで回答のドラフトを作成
-    #---------------------------------------------------------------------------
-    def _create_manuscript(self, state: NodeState):
-        node_name = "create_manuscript"
-
-        yield {"type": "log", "node": node_name, "content": "Create draft node start"}
-
-        input_text = state["input"]
-        review_result = state.get("review_report", "")
-        feedback = state.get("review_advice", "")
-        pre_manuscript = state.get("manuscript", "")
-
-        system_prompt = (
-            "あなたは、短編小説の「あらすじ」を作成する小説家です。\n"
-            "あなたの仕事は、与えられた指示をもとに、小説の「あらすじ」を考えることです。"
-        )
-
-        user_prompt = (
-            "以下の指示をもとに小説の「あらすじ」を考えてください。\n\n"
-            "### 与えられた指示\n"
-            f"{input_text}"
-        )
-
-        if pre_manuscript:
-            user_prompt = (
-                "前回作成したあらすじに対して、編集者から厳しいレビューが入りました。\n"
-                "指摘事項と評価スコアを反映し、**劇的に改善された修正版**を作成してください。\n\n"
-                "### 元の指示の内容\n"
-                f"{input_text}\n\n"
-                "### 前回作成した「あらすじ」\n"
-                f"{pre_manuscript}\n\n"
-                f"{review_result}\n\n"
-                "### 編集者からの総評・修正指示\n"
-                f"{str(feedback)}"
-            )
-
-        # LLMで回答を作成 (ストリーミング)
-        response = ""
-        for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
-            response += chunk
-            yield {
-                "type": "answer_text",
-                "node": node_name,
-                "taskId": f"{node_name}-answer-text",
-                "content": chunk
-            }
-
-        yield {"type": "log", "node": node_name, "content": "原稿作成完了"}
-
-        return {"manuscript": response}
-
-    #---------------------------------------------------------------------------
-    # LLMでレビューを実施(判定ロジックをPython側に移譲)
-    #---------------------------------------------------------------------------
-    def _create_review(self, state: NodeState):
-        node_name = "review"
-
-        yield {"type": "log", "node": node_name, "content": "Create review node start"}
-
-        input_text = state["input"]
-        manuscript = state["manuscript"]
-        retry_count = state.get("retry_count", 0)
-
-        # 無限ループの回避用
-        if retry_count >= 5:
-            yield {"type": "log", "node": node_name,
-                   "content": f"Max retries ({retry_count}) reached. Approving result."}
-            return {
-                "review_judgement": "OK",
-                "review_advice": [],
-                "review_report": "最大リトライ回数に達したため、現在の原稿を採用します。"
-            }
-
-        system_prompt = (
-            "あなたは、作家の卵を育てる**建設的で親切な編集者**です。\n"
-            "「あらすじ」の完成度を高めるために、良い点は褒め、改善点は具体的にアドバイスしてください。\n\n"
-            "以下の評価項目について評価を行ってください。\n"
-            "1. 読者を惹きつける内容か? (attractiveness)\n"
-            "2. 内容はわかりやすいか? (clarity)\n"
-            "3. 指示への適合性 (instruction_alignment)\n"
-            "4. 公開安全性 (public_safety)\n\n"
-            "### 出力形式(厳守)\n"
-            "必ず以下の YAML 形式のみで出力してください。\n\n"
-            "scores:\n"
-            "  attractiveness:\n"
-            "    score: <0-10の整数>\n"
-            "    reason:\n"
-            "      - \"<評価理由>\"\n"
-            "  clarity:\n"
-            "    score: <0-10の整数>\n"
-            "    reason:\n"
-            "      - \"<評価理由>\"\n"
-            "  instruction_alignment:\n"
-            "    score: <0-10の整数>\n"
-            "    reason:\n"
-            "      - \"<評価理由>\"\n"
-            "  public_safety:\n"
-            "    score: <0-10の整数>\n"
-            "    reason:\n"
-            "      - \"<評価理由>\"\n"
-            "advice:\n"
-            "  - \"<点数が低い項目の改善指示1>\"\n"
-            "  - \"<特になければ空配列 [] のみとすること>\""
-        )
-
-        user_prompt = (
-            "以下の小説の「あらすじ」について、編集者として厳しくレビューをしてください。\n\n"
-            "### 与えられた指示\n"
-            f"{input_text}\n\n"
-            "### 現状の小説の「あらすじ」\n"
-            f"{manuscript}"
-        )
-
-        # LLMで回答を作成
-        response = ""
-        for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
-            response += chunk
-            yield {
-                "type": "answer_text",
-                "node": node_name,
-                "taskId": f"{node_name}-answer-text",
-                "content": chunk
-            }
-
-        yield {"type": "log", "node": node_name, "content": "レビュー生成完了。解析を開始します。"}
-
-        # レビュー結果のパース(YAMLとしてパース)
-        try:
-            cleaned_response = response.strip()
-            if "```yaml" in cleaned_response:
-                cleaned_response = cleaned_response.split("```yaml")[1].split("```")[0].strip()
-            elif "```" in cleaned_response:
-                cleaned_response = cleaned_response.split("```")[1].split("```")[0].strip()
-            review_data = yaml.safe_load(cleaned_response)
-        except Exception as e:
-            yield {"type": "log", "node": node_name, "content": f"[Error] YAML Parse failed: {e}"}
-            review_data = {"scores": {}, "advice": ["レビュー解析エラー"]}
-
-        # 機械的な判定ロジック (全項目が pass_threshold 以上なら OK)
-        scores = review_data.get("scores", {})
-        formatted_report = ""
-        final_judgement = "OK"
-        pass_threshold = 7
-
-        if scores:
-            report_lines = ["### 評価レポート"]
-            for category, data in scores.items():
-                s_val = int(data.get('score', 0))
-                reasons = data.get('reason', [])
-                if s_val < pass_threshold:
-                    final_judgement = "NG"
-                report_lines.append(f"- **{category}**: {s_val}/10点")
-                if isinstance(reasons, list):
-                    for r in reasons:
-                        report_lines.append(f"  - {r}")
-                else:
-                    report_lines.append(f"  - {reasons}")
-            formatted_report = "\n".join(report_lines)
-        else:
-            final_judgement = "NG"
-            formatted_report = "評価データの取得に失敗しました。"
-
-        # アドバイスの整形
-        advice_list = review_data.get("advice", [])
-        advice_text = "\n".join([f"- {item}" for item in advice_list]) if advice_list else "(特になし)"
-
-        yield {
-            "type": "log",
-            "node": node_name,
-            "content": f"機械判定結果: {final_judgement} (閾値: {pass_threshold}点)\n{formatted_report}"
-        }
-
-        return {
-            "review_judgement": final_judgement,
-            "review_report": formatted_report,
-            "review_advice": advice_text,
-            "retry_count": retry_count + 1
-        }
-
-    #---------------------------------------------------------------------------
-    # チェックノード
-    #---------------------------------------------------------------------------
-    def _check_result_node(self, state: NodeState):
-        """
-        レビュー結果を確認し、次のアクションを決定するノード。
-        """
-        node_name = "check_result"
-        review_judgement = state.get("review_judgement", "NG")
-        decision = "complete" if review_judgement == "OK" else "retry"
-
-        yield {
-            "type": "log",
-            "node": node_name,
-            "content": f"[Check Node] Judgement: {review_judgement} -> Decision: {decision}"
-        }
-
+    def check_node(state: NodeState):
+        too_short = len(state["answer"]) < 30
+        give_up = state["attempts"] >= 3
+        decision = "retry" if (too_short and not give_up) else "ok"
+        yield {"type": "log",
+               "content": f"len={len(state['answer'])} attempts={state['attempts']} -> {decision}"}
         return {"decision": decision}
 
-    #---------------------------------------------------------------------------
-    # 承認済みプロットから「本の裏表紙(Blurb)」を作成するノード
-    #---------------------------------------------------------------------------
-    def _create_book_blurb(self, state: NodeState):
-        node_name = "create_book_blurb"
-        yield {"type": "log", "node": node_name, "content": "Create Book Blurb Start"}
-
-        approved_plot = state["manuscript"]
-        feedback = state.get("review_advice", "")
-
-        system_prompt = (
-            "あなたは純文学の小説家です。\n"
-            "あなたの仕事は、渡されたプロットを元に、**小説のあらすじ**を執筆することです。\n"
-            "### ルール(厳守)\n"
-            "- 出力はあらすじ部分のみとしてください。"
-        )
-
-        user_prompt = (
-            "以下のプロットを元に、魅力的な小説のあらすじを書いてください。\n\n"
-            "### 物語のプロット(全容)\n"
-            f"{approved_plot}\n\n"
-            "### 編集者からの執筆アドバイス\n"
-            f"{feedback}"
-        )
-
-        response = ""
-        for chunk in self.llm.respond(system_prompt=system_prompt, user_text=user_prompt, stream=True):
-            response += chunk
-            yield {
-                "type": "answer_text",
-                "node": node_name,
-                "taskId": f"{node_name}-answer-text",
-                "content": chunk
-            }
-
-        yield {"type": "log", "node": node_name, "content": "Blurb作成完了"}
-        return {"final_novel": response}
+    g = LLMGraph(state_schema=QAState)
+    g.add_node("answer", answer_node)
+    g.add_node("check", check_node)
+    g.add_edge(LLMGraph.START, "answer")
+    g.add_edge("answer", "check")
+    g.add_conditional_edge(
+        "check", "decision",
+        {"retry": "answer", "ok": LLMGraph.END},
+    )
+    return g
 
 
-#-----------------------------------------------------------------------
-# メインプログラム
-#-----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 実行
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # 1. エージェントの構築
-    LLM_PATH = "mlx-community/Qwen3.6-27B-4bit"
-    agent = NovelistAgent(model_path=LLM_PATH)
+    llm = MlxLLM(model_path="mlx-community/Qwen3.6-27B-4bit")
+    graph = build_qa_graph(llm)
+    print(graph.get_graph_mermaid())
 
-    # 2. 入力
-    question = "伝説の野球選手というテーマで小説のあらすじを作成してください。"
-    print(f"Request: {question}\n")
-
-    # 3. 実行 (ストリーミングの受け取り)
-    for event in agent.run(question=question):
+    for event in graph.run({"question": "地球の半径は何 km?", "attempts": 0}):
         if event["type"] == "answer_text":
             print(event["content"], end="", flush=True)
         elif event["type"] == "log":
-            print(f"\n[LOG] {event['node']}: {event['content']}")
-        elif event["type"] == "images":
-            print(f"\n[IMAGE] {event['content']}")
-
-    print("\n\nProcess Completed.")
+            print(f"\n[LOG] {event['content']}")
+        elif event["type"] == "error":
+            print(f"\n[ERROR] {event['content']}")
+    print()
 ```
 
-このサンプルでは:
+このサンプルで示しているパターン:
 
-- `_create_manuscript` / `_create_review` / `_create_book_blurb` はジェネレータノードで、LLM のチャンクを `yield` してそのまま CLI へ流している
-- `_check_result_node` で `state["decision"]` を `"retry" | "complete"` に設定
-- `add_conditional_edge("check_result", "decision", {...})` でリトライループを構成
-- `retry_count >= 5` はドメイン側のリトライ上限（ライブラリ側の暴走対策とは独立）
-- イベント `{"type": "log" | "answer_text" | "images"}` のスキーマは利用側の規約に過ぎず、ライブラリはイベントの中身を解釈しない
+- `TypedDict` で state のキーを宣言（`question` / `answer` / `attempts` / `decision`）
+- LLM の出力チャンクをノード内で `yield` してそのまま呼び出し側へ流す
+- `add_conditional_edge` で「retry → answer に戻る」「ok → END へ抜ける」という分岐を組む
+- リトライ上限はノード側のドメインロジック（`attempts >= 3` で `decision="ok"`）として記述
+- 呼び出し側はイベントの `type` を見て表示先を振り分けるだけ
 
 ## ライセンス / リポジトリ
 https://github.com/ToPo-ToPo-ToPo/llm_graph
