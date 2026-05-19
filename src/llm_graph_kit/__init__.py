@@ -1,9 +1,7 @@
-
-from .llm_graph import LLMGraph, NodeState
-from .graph_logger import GraphLogger
+from .llm_graph import LLMGraph, NodeState, NodeFunc
 
 __all__ = [
     "LLMGraph",
     "NodeState",
-    "GraphLogger"
+    "NodeFunc",
 ]
