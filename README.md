@@ -27,7 +27,7 @@ uv sync
 ライブラリとして利用するだけなら:
 
 ```bash
-pip install llm-graph-kit
+uv add llm-graph-kit
 ```
 
 ---
