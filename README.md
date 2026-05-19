@@ -337,7 +337,7 @@ if __name__ == "__main__":
 
 **構成**:
 
-- LLM とグラフをエージェントクラスに閉じ込める
+- LLM は外側で生成してエージェントへ注入する(依存注入)
 - グラフ構築を `build_graph()` メソッドに分離(再利用・テストしやすい)
 - 各ノードはエージェントの private メソッド (`_answer`, `_check` など)
 - 公開エントリポイント `run()` は initial state の組み立て、Mermaid 図の通知、下位グラフからのイベント中継 (`yield from`) を担当
@@ -378,9 +378,8 @@ class QAAgent:
     # --------------------------------------------------
     # 初期化
     # --------------------------------------------------
-    def __init__(self, model_path: str) -> None:
-        print(f"Loading Model: {model_path} ...")
-        self.llm = MlxLLM(model_path=model_path)
+    def __init__(self, llm) -> None:
+        self.llm = llm
 
     # --------------------------------------------------
     # 公開エントリポイント
@@ -479,7 +478,8 @@ class QAAgent:
 if __name__ == "__main__":
     # 1. エージェントを構築
     LLM_PATH = "mlx-community/Qwen3.6-27B-4bit"
-    agent = QAAgent(model_path=LLM_PATH)
+    llm = MlxLLM(model_path=LLM_PATH)
+    agent = QAAgent(llm=llm)
 
     # 2. 入力
     question = "地球の半径は何 km?"
@@ -505,7 +505,8 @@ if __name__ == "__main__":
 
 このサンプルで示しているパターン:
 
-- **エージェントの境界**: LLM/グラフ/ノード関数をひとつのクラスに集約し、外側からは `agent.run(...)` だけで呼べる
+- **依存注入**: LLM は外側で生成してエージェントへ渡す。テスト時のモック化や LLM 実装の差し替えがしやすい
+- **エージェントの境界**: グラフとノード関数をひとつのクラスに集約し、外側からは `agent.run(...)` だけで呼べる
 - **`build_graph()` の分離**: グラフ構築を専用メソッドにすることで、テスト・可視化・サブグラフ化が容易
 - **`run()` の責務**: initial state の生成と `yield from graph.run(...)` による中継だけに留め、各ノードの処理は private メソッドに任せる
 - **イベントの規約**: `type` で種別を分け(`log` / `answer_text` / `error` 等)、`node` キーに発火元を入れる
