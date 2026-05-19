@@ -330,14 +330,21 @@ if __name__ == "__main__":
   final_message: completed after 3 ticks
 ```
 
-## サンプル 2: LLM を使う最小例（リトライ付き）
+## サンプル 2: LLM を使うエージェント(理想構成例)
 
 リポジトリの [`example_with_llm.py`](./example_with_llm.py) と同じものです。
-「質問に答える → 答えをチェック → 短ければやり直す」という 2 段のグラフを構築します。LLM のストリーミングチャンクを `yield` でそのまま呼び出し側へ流す典型例です。
+「質問に答える → 答えをチェック → 短ければやり直す」という 2 段のグラフを構築します。LLM のストリーミングチャンクを `yield` でそのまま呼び出し側へ流す、エージェント実装の典型構成です。
+
+**構成**:
+
+- LLM とグラフをエージェントクラスに閉じ込める
+- グラフ構築を `build_graph()` メソッドに分離(再利用・テストしやすい)
+- 各ノードはエージェントの private メソッド (`_answer`, `_check` など)
+- 公開エントリポイント `run()` は initial state の組み立て、Mermaid 図の通知、下位グラフからのイベント中継 (`yield from`) を担当
 
 ```python
 """
-LLM を使った最小サンプル。
+LLM を使った最小サンプル(エージェントの理想構成例)。
 
 質問に答えるノードと、答えをチェックするノードからなる 2 段グラフ。
 チェックで「短すぎる」と判定されたらやり直す。最大 3 回でループを抜ける。
@@ -363,64 +370,147 @@ class QAState(TypedDict, total=False):
 
 
 # ---------------------------------------------------------------------------
-# グラフ構築(LLM を受け取り、ノード関数にクロージャで埋め込む)
+# エージェントクラス
 # ---------------------------------------------------------------------------
-def build_qa_graph(llm: MlxLLM) -> LLMGraph:
+class QAAgent:
+    """質問応答エージェント。LLM を保持し、グラフの定義と実行を提供する。"""
 
-    def answer_node(state: NodeState):
-        # LLM のチャンクをそのまま呼び出し側へストリーミング
-        prompt = f"質問: {state['question']}\n簡潔に答えてください。"
+    # --------------------------------------------------
+    # 初期化
+    # --------------------------------------------------
+    def __init__(self, model_path: str) -> None:
+        print(f"Loading Model: {model_path} ...")
+        self.llm = MlxLLM(model_path=model_path)
+
+    # --------------------------------------------------
+    # 公開エントリポイント
+    # --------------------------------------------------
+    def run(self, question: str):
+        """質問を受け取り、グラフ実行中のイベントを呼び出し側へ yield する。"""
+        graph = self.build_graph()
+
+        # まずグラフ構造を log イベントとして流しておく(呼び出し側で可視化できる)
+        yield {
+            "type": "log",
+            "node": "system",
+            "content": f"Workflow Definition:\n{graph.get_graph_mermaid()}",
+        }
+
+        # 下位グラフのイベントをそのまま中継
+        initial_state = {"question": question, "attempts": 0}
+        yield from graph.run(initial_state)
+
+    # --------------------------------------------------
+    # グラフ定義
+    # --------------------------------------------------
+    def build_graph(self) -> LLMGraph:
+        """このエージェントのワークフローを構築して返す。"""
+        g = LLMGraph(state_schema=QAState)
+
+        # ノード登録
+        g.add_node(name="answer", func=self._answer)
+        g.add_node(name="check", func=self._check)
+
+        # エッジ定義
+        g.add_edge(LLMGraph.START, "answer")
+        g.add_edge("answer", "check")
+
+        # 条件付きエッジ: state["decision"] によって遷移先を切り替える
+        g.add_conditional_edge(
+            "check",
+            "decision",
+            {
+                "retry": "answer",
+                "ok": LLMGraph.END,
+            },
+        )
+        return g
+
+    # --------------------------------------------------
+    # ノード: LLM で回答を生成(ストリーミング)
+    # --------------------------------------------------
+    def _answer(self, state: NodeState):
+        node_name = "answer"
+        yield {"type": "log", "node": node_name, "content": "answering..."}
+
+        system_prompt = "あなたは簡潔に答えるアシスタントです。"
+        user_prompt = f"質問: {state['question']}"
+
+        # LLM のチャンクをそのまま呼び出し側へ流す
         text = ""
-        for chunk in llm.respond(system_prompt="", user_text=prompt, stream=True):
+        for chunk in self.llm.respond(
+            system_prompt=system_prompt, user_text=user_prompt, stream=True
+        ):
             text += chunk
-            yield {"type": "answer_text", "content": chunk}
+            yield {
+                "type": "answer_text",
+                "node": node_name,
+                "taskId": f"{node_name}-answer-text",
+                "content": chunk,
+            }
+
+        # state を更新(回答本文と試行回数のインクリメント)
         return {"answer": text, "attempts": state.get("attempts", 0) + 1}
 
-    def check_node(state: NodeState):
+    # --------------------------------------------------
+    # ノード: 回答の品質チェックと分岐シグナルの決定
+    # --------------------------------------------------
+    def _check(self, state: NodeState):
+        node_name = "check"
+
         too_short = len(state["answer"]) < 30
         give_up = state["attempts"] >= 3
         decision = "retry" if (too_short and not give_up) else "ok"
-        yield {"type": "log",
-               "content": f"len={len(state['answer'])} attempts={state['attempts']} -> {decision}"}
+
+        yield {
+            "type": "log",
+            "node": node_name,
+            "content": (
+                f"len={len(state['answer'])} attempts={state['attempts']}"
+                f" -> {decision}"
+            ),
+        }
         return {"decision": decision}
 
-    g = LLMGraph(state_schema=QAState)
-    g.add_node("answer", answer_node)
-    g.add_node("check", check_node)
-    g.add_edge(LLMGraph.START, "answer")
-    g.add_edge("answer", "check")
-    g.add_conditional_edge(
-        "check", "decision",
-        {"retry": "answer", "ok": LLMGraph.END},
-    )
-    return g
-
 
 # ---------------------------------------------------------------------------
-# 実行
+# メインプログラム
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    llm = MlxLLM(model_path="mlx-community/Qwen3.6-27B-4bit")
-    graph = build_qa_graph(llm)
-    print(graph.get_graph_mermaid())
+    # 1. エージェントを構築
+    LLM_PATH = "mlx-community/Qwen3.6-27B-4bit"
+    agent = QAAgent(model_path=LLM_PATH)
 
-    for event in graph.run({"question": "地球の半径は何 km?", "attempts": 0}):
+    # 2. 入力
+    question = "地球の半径は何 km?"
+    print(f"Request: {question}\n")
+
+    # 3. 実行(ストリーミングを受け取り、イベント種別ごとに表示先を変える)
+    for event in agent.run(question=question):
+
+        # LLM 出力のチャンク
         if event["type"] == "answer_text":
             print(event["content"], end="", flush=True)
+
+        # ログ
         elif event["type"] == "log":
-            print(f"\n[LOG] {event['content']}")
+            print(f"\n[LOG] {event['node']}: {event['content']}")
+
+        # ノード内例外(ライブラリが自動で yield する)
         elif event["type"] == "error":
-            print(f"\n[ERROR] {event['content']}")
-    print()
+            print(f"\n[ERROR] {event['agent']}: {event['content']}")
+
+    print("\n\nProcess Completed.")
 ```
 
 このサンプルで示しているパターン:
 
-- `TypedDict` で state のキーを宣言（`question` / `answer` / `attempts` / `decision`）
-- LLM の出力チャンクをノード内で `yield` してそのまま呼び出し側へ流す
-- `add_conditional_edge` で「retry → answer に戻る」「ok → END へ抜ける」という分岐を組む
-- リトライ上限はノード側のドメインロジック（`attempts >= 3` で `decision="ok"`）として記述
-- 呼び出し側はイベントの `type` を見て表示先を振り分けるだけ
+- **エージェントの境界**: LLM/グラフ/ノード関数をひとつのクラスに集約し、外側からは `agent.run(...)` だけで呼べる
+- **`build_graph()` の分離**: グラフ構築を専用メソッドにすることで、テスト・可視化・サブグラフ化が容易
+- **`run()` の責務**: initial state の生成と `yield from graph.run(...)` による中継だけに留め、各ノードの処理は private メソッドに任せる
+- **イベントの規約**: `type` で種別を分け(`log` / `answer_text` / `error` 等)、`node` キーに発火元を入れる
+- **`__errors__` は触らない**: ノードで例外が起きるとライブラリが自動で `{"type": "error", "agent": ..., "content": ...}` を流す
+- **リトライの上限はドメイン側**: `attempts >= 3` で `decision="ok"` にして抜ける。`max_steps` はライブラリ側のセーフティネット
 
 ## ライセンス / リポジトリ
 https://github.com/ToPo-ToPo-ToPo/llm_graph
