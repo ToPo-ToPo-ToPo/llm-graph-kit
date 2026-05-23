@@ -10,6 +10,7 @@ LLM ベースのエージェントの動作内容を**グラフ形式**で記述
 - `TypedDict` でステートのキーを宣言し、未宣言キーの書き込みを実行時に検出
 - ノードで発生した例外を自動で捕捉し、エラーイベントとして yield しつつ実行を継続
 - `get_graph_mermaid()` でグラフ構造を Mermaid 文字列として出力
+- **ブラウザベースのノードエディタ GUI**（オプション）でドラッグ&ドロップによる no-code 構築・実行・Python コード生成
 
 ## インストール
 
@@ -512,6 +513,52 @@ if __name__ == "__main__":
 - **イベントの規約**: `type` で種別を分け(`log` / `answer_text` / `error` 等)、`node` キーに発火元を入れる
 - **`__errors__` は触らない**: ノードで例外が起きるとライブラリが自動で `{"type": "error", "agent": ..., "content": ...}` を流す
 - **リトライの上限はドメイン側**: `attempts >= 3` で `decision="ok"` にして抜ける。`max_steps` はライブラリ側のセーフティネット
+
+## GUI（ノードエディタ）
+
+ブラウザ上でノードを繋いでエージェントを no-code で構築できる GUI を同梱しています。
+FastAPI + Drawflow.js ベースで、ローカルで開発用に動かす想定です。
+
+### インストール
+
+```bash
+uv add 'llm-graph-kit[gui]'
+# または
+pip install 'llm-graph-kit[gui]'
+```
+
+### 起動
+
+```bash
+# CLI から
+python -m llm_graph_kit.gui
+# ホスト/ポート指定
+python -m llm_graph_kit.gui --host 127.0.0.1 --port 8000
+```
+
+または Python から:
+
+```python
+from llm_graph_kit import launch_gui
+launch_gui(host="127.0.0.1", port=8000)
+```
+
+`http://127.0.0.1:8000/` をブラウザで開くと、以下の操作ができます。
+
+- **+ Function / + Conditional**: 通常ノード・条件分岐ノードを追加
+- ノードクリック → 右パネルで `name` / Python コード / condition / 出力 signal を編集
+- ノード同士の出力ポート → 入力ポートをドラッグで **エッジを接続**
+- 左パネルで **State Schema** (TypedDict) と **Initial State** (JSON) を編集
+- **▶ Run**: グラフを実行し、`yield` されたイベントを下部にリアルタイム表示（SSE）
+- **Mermaid**: 現在のグラフを Mermaid テキストで表示
+- **Python Code**: 現在のグラフを実行可能な Python ソースとして出力
+- **Save / Load**: グラフ仕様を JSON ファイルに保存・復元
+
+### セキュリティ上の注意
+
+GUI はユーザーが入力した Python コードを `exec` で評価します。
+**信頼できないネットワークに公開してはいけません**。デフォルトの bind 先は
+`127.0.0.1` で、外部からはアクセスできない設定になっています。
 
 ## ライセンス / リポジトリ
 https://github.com/ToPo-ToPo-ToPo/llm_graph
