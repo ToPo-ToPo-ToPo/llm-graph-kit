@@ -36,8 +36,12 @@ uv sync --extra gui
 
 ## テスト
 
-テストは `tests/` にまとめてあり、**pytest 不要**（標準ライブラリの `unittest` のみ）です。
-リポジトリ直下のランナーを実行します。
+テストとデモは `tests/` にまとめてあり、**pytest は不要**です（標準ライブラリの
+`unittest` のみで動作し、追加インストールは要りません）。
+
+### 自動テスト（合否判定）
+
+リポジトリ直下のランナーですべての `test_*.py` を実行します。
 
 ```bash
 python run_tests.py                 # 全テストを実行
@@ -53,21 +57,21 @@ python tests/test_codegen.py        # 個別ファイルを直接実行
 | `tests/test_codegen.py` | GUI 仕様 → Python コード生成（`gui/codegen.py`） |
 | `tests/test_server.py` | GUI サーバーのヘルパー（`gui/server.py`、fastapi 未導入なら自動スキップ） |
 
-各チェックの「何を確認し、何を入力し、期待値と実測値がどうだったか」を
-1 件ずつ日本語で表示する**読みやすい版**もあります（学習・デモ向け）。
+### デモスクリプト（挙動を目で確認）
+
+`test_*.py` 以外に、実行すると挙動が読みやすく表示されるスクリプトもあります
+（ランナーの検出対象外なので自動テストには含まれません）。それぞれ単体で実行します。
+
+| ファイル | 内容 |
+| --- | --- |
+| `tests/demo_llm_graph.py` | 各チェックの「確認内容・入力・期待値・実測値・合否」を 1 件ずつ日本語表示 |
+| `tests/demo_llm_agent.py` | LLM エージェントが**自然言語をストリーミング表示**（モック LLM 内蔵・実 LLM は依存注入で差し替え可） |
 
 ```bash
 python tests/demo_llm_graph.py            # 結果を 1 件ずつ表示
 python tests/demo_llm_graph.py --no-color # 色なし（ログ保存時など）
-```
 
-LLM を使ったエージェントが**自然言語をストリーミング表示**する様子を見たい場合は
-`tests/demo_llm_agent.py` を実行します。追加インストール不要で動くよう**モック LLM を
-内蔵**しており（実 LLM は依存注入で差し替え可能）、回答→チェック→リトライの
-ループが流れる様子を確認できます。
-
-```bash
-python tests/demo_llm_agent.py
+python tests/demo_llm_agent.py            # 回答→チェック→リトライの流れを逐次表示
 ```
 
 ## クイックスタート
