@@ -34,6 +34,25 @@ source .venv/bin/activate
 uv sync --extra gui
 ```
 
+## テスト
+
+テストは `tests/` にまとめてあり、**pytest 不要**（標準ライブラリの `unittest` のみ）です。
+リポジトリ直下のランナーを実行します。
+
+```bash
+python run_tests.py                 # 全テストを実行
+python run_tests.py -v              # 各テスト名も表示
+python run_tests.py test_builder    # 特定モジュールだけ実行
+python tests/test_codegen.py        # 個別ファイルを直接実行
+```
+
+| ファイル | 対象 |
+| --- | --- |
+| `tests/test_llm_graph.py` | `LLMGraph` 本体（構築・実行・条件分岐・スキーマ・Mermaid） |
+| `tests/test_builder.py` | GUI 仕様 → `LLMGraph` 変換（`gui/builder.py`） |
+| `tests/test_codegen.py` | GUI 仕様 → Python コード生成（`gui/codegen.py`） |
+| `tests/test_server.py` | GUI サーバーのヘルパー（`gui/server.py`、fastapi 未導入なら自動スキップ） |
+
 ## クイックスタート
 
 ```python
