@@ -6,14 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = []
 
-[project.optional-dependencies]
-# LLM を使うサンプル/テスト (example_with_llm.py, test_novelist.py) を実行する
-# 場合にのみ必要。ライブラリ本体 (llm_graph_kit) は標準ライブラリのみで動作する。
-llm = [
-    "augllm>=2.2.2",
-    "pyyaml>=6.0",
-]
-
 [project.urls]
 Homepage = "https://github.com/ToPo-ToPo-ToPo/llm_graph"
 
