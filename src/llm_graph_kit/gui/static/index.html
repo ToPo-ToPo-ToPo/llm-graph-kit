@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>llm-graph-kit GUI</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jerosoler/Drawflow/dist/drawflow.min.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <div class="brand">llm-graph-kit <span class="brand-sub">GUI</span></div>
+    <div class="toolbar-group">
+      <button id="btn-add-function" class="btn">+ Function</button>
+      <button id="btn-add-conditional" class="btn">+ Conditional</button>
+    </div>
+    <div class="toolbar-group">
+      <button id="btn-run" class="btn btn-primary">▶ Run</button>
+      <button id="btn-mermaid" class="btn">Mermaid</button>
+      <button id="btn-codegen" class="btn">Python Code</button>
+    </div>
+    <div class="toolbar-group">
+      <button id="btn-save" class="btn">Save</button>
+      <button id="btn-load" class="btn">Load</button>
+      <input type="file" id="file-input" accept=".json" style="display:none" />
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="left-panel">
+      <section>
+        <h2>State Schema</h2>
+        <div id="state-fields" class="field-list"></div>
+        <button id="btn-add-field" class="btn btn-small">+ Field</button>
+        <p class="hint">TypedDict の宣言キー。空ならスキーマなしで実行。</p>
+      </section>
+
+      <section>
+        <h2>Initial State (JSON)</h2>
+        <textarea id="initial-state" rows="6" spellcheck="false">{
+  "input": "hello"
+}</textarea>
+      </section>
+
+      <section>
+        <h2>Max Steps</h2>
+        <input type="number" id="max-steps" value="100" min="1" />
+      </section>
+    </aside>
+
+    <div id="drawflow-wrapper">
+      <div id="drawflow"></div>
+    </div>
+
+    <aside class="right-panel">
+      <h2>Properties</h2>
+      <div id="node-properties">
+        <p class="hint">ノードをクリックすると編集できます。</p>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="event-log">
+    <div class="event-log-header">
+      <h2>Events</h2>
+      <div>
+        <span class="status" id="run-status">idle</span>
+        <button id="btn-clear-log" class="btn btn-small">Clear</button>
+      </div>
+    </div>
+    <div id="log"></div>
+  </footer>
+
+  <dialog id="modal">
+    <header>
+      <h2 id="modal-title">Title</h2>
+      <button id="modal-close" class="btn btn-small">Close</button>
+    </header>
+    <pre><code id="modal-body"></code></pre>
+    <footer>
+      <button id="modal-copy" class="btn">Copy</button>
+    </footer>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/gh/jerosoler/Drawflow/dist/drawflow.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -10,6 +10,7 @@ LLM ベースのエージェントの動作内容を**グラフ形式**で記述
 - `TypedDict` でステートのキーを宣言し、未宣言キーの書き込みを実行時に検出
 - ノードで発生した例外を自動で捕捉し、エラーイベントとして yield しつつ実行を継続
 - `get_graph_mermaid()` でグラフ構造を Mermaid 文字列として出力
+- **ブラウザベースのノードエディタ GUI**（オプション）でドラッグ&ドロップによる no-code 構築・実行・Python コード生成
 
 ## インストール
 
@@ -17,12 +18,20 @@ LLM ベースのエージェントの動作内容を**グラフ形式**で記述
 uv add llm-graph-kit
 ```
 
+ライブラリ本体 (`llm_graph_kit`) は標準ライブラリのみで動作し、追加の依存はありません。
+
+GUI（ノードエディタ）を使う場合は `gui` エクストラを追加します（詳細は [GUI の章](#gui%E3%83%8E%E3%83%BC%E3%83%89%E3%82%A8%E3%83%87%E3%82%A3%E3%82%BF) を参照）:
+
+```bash
+uv add 'llm-graph-kit[gui]'
+```
+
 開発する場合:
 
 ```bash
 uv venv
 source .venv/bin/activate
-uv sync
+uv sync --extra gui
 ```
 
 ## クイックスタート
@@ -212,7 +221,7 @@ def my_node(state: NodeState):
 - 各ノードの戻り値 dict は `state.update(...)` で既存 state にマージされます（同名キーは上書き）
 - `__errors__` は予約キー。`initial_state` でもノード戻り値でも書き込めません（読み取りは自由）
 
-## サンプル 1: シンプルなカウンタ（LLM 非依存）
+## サンプル: シンプルなカウンタ（LLM 非依存）
 
 リポジトリの [`example_with_schema.py`](./example_with_schema.py) と同じものです。3 回ループしてから終端ノードに進むグラフです。
 
@@ -330,188 +339,96 @@ if __name__ == "__main__":
   final_message: completed after 3 ticks
 ```
 
-## サンプル 2: LLM を使うエージェント
+## LLM と組み合わせるときの推奨パターン
 
-リポジトリの [`example_with_llm.py`](./example_with_llm.py) と同じものです。
-「質問に答える → 答えをチェック → 短ければやり直す」という 2 段のグラフを構築します。LLM のストリーミングチャンクを `yield` でそのまま呼び出し側へ流す、エージェント実装の典型構成です。
-
-**構成**:
-
-- LLM は外側で生成してエージェントへ注入する(依存注入)
-- グラフ構築を `build_graph()` メソッドに分離(再利用・テストしやすい)
-- 各ノードはエージェントの private メソッド (`_answer`, `_check` など)
-- 公開エントリポイント `run()` は initial state の組み立て、Mermaid 図の通知、下位グラフからのイベント中継 (`yield from`) を担当
+本ライブラリは特定の LLM ライブラリに依存しません。任意の LLM クライアントを**依存注入**でエージェントに渡し、ストリーミングチャンクを `yield` で呼び出し側へ流すのが推奨構成です。
 
 ```python
-"""
-LLM を使った最小サンプル(エージェント)。
-
-質問に答えるノードと、答えをチェックするノードからなる 2 段グラフ。
-チェックで「短すぎる」と判定されたらやり直す。最大 3 回でループを抜ける。
-
-実行:
-    python example_with_llm.py
-"""
 from typing import TypedDict
-
-from augllm import MlxLLM
-
 from llm_graph_kit import LLMGraph, NodeState
 
 
-# ---------------------------------------------------------------------------
-# ステートのスキーマ
-# ---------------------------------------------------------------------------
 class QAState(TypedDict, total=False):
     question: str
     answer: str
-    attempts: int
-    decision: str
 
 
-# ---------------------------------------------------------------------------
-# エージェントクラス
-# ---------------------------------------------------------------------------
 class QAAgent:
-    """質問応答エージェント。LLM を保持し、グラフの定義と実行を提供する。"""
-
-    # --------------------------------------------------
-    # 初期化
-    # --------------------------------------------------
     def __init__(self, llm) -> None:
-        self.llm = llm
+        self.llm = llm            # LLM クライアントは外側で生成して注入する
 
-    # --------------------------------------------------
-    # 公開エントリポイント
-    # --------------------------------------------------
     def run(self, question: str):
-        """質問を受け取り、グラフ実行中のイベントを呼び出し側へ yield する。"""
         graph = self.build_graph()
+        yield from graph.run({"question": question})
 
-        # まずグラフ構造を log イベントとして流しておく(呼び出し側で可視化できる)
-        yield {
-            "type": "log",
-            "node": "system",
-            "content": f"Workflow Definition:\n{graph.get_graph_mermaid()}",
-        }
-
-        # 下位グラフのイベントをそのまま中継
-        initial_state = {"question": question, "attempts": 0}
-        yield from graph.run(initial_state)
-
-    # --------------------------------------------------
-    # グラフ定義
-    # --------------------------------------------------
     def build_graph(self) -> LLMGraph:
-        """このエージェントのワークフローを構築して返す。"""
         g = LLMGraph(state_schema=QAState)
-
-        # ノード登録
-        g.add_node(name="answer", func=self._answer)
-        g.add_node(name="check", func=self._check)
-
-        # エッジ定義
+        g.add_node("answer", self._answer)
         g.add_edge(LLMGraph.START, "answer")
-        g.add_edge("answer", "check")
-
-        # 条件付きエッジ: state["decision"] によって遷移先を切り替える
-        g.add_conditional_edge(
-            "check",
-            "decision",
-            {
-                "retry": "answer",
-                "ok": LLMGraph.END,
-            },
-        )
+        g.add_edge("answer", LLMGraph.END)
         return g
 
-    # --------------------------------------------------
-    # ノード: LLM で回答を生成(ストリーミング)
-    # --------------------------------------------------
     def _answer(self, state: NodeState):
-        node_name = "answer"
-        yield {"type": "log", "node": node_name, "content": "answering..."}
-
-        system_prompt = "あなたは簡潔に答えるアシスタントです。"
-        user_prompt = f"質問: {state['question']}"
-
-        # LLM のチャンクをそのまま呼び出し側へ流す
         text = ""
-        for chunk in self.llm.respond(
-            system_prompt=system_prompt, user_text=user_prompt, stream=True
-        ):
+        # お使いの LLM クライアントのストリーミング API に置き換えてください
+        for chunk in self.llm.stream(state["question"]):
             text += chunk
-            yield {
-                "type": "answer_text",
-                "node": node_name,
-                "taskId": f"{node_name}-answer-text",
-                "content": chunk,
-            }
-
-        # state を更新(回答本文と試行回数のインクリメント)
-        return {"answer": text, "attempts": state.get("attempts", 0) + 1}
-
-    # --------------------------------------------------
-    # ノード: 回答の品質チェックと分岐シグナルの決定
-    # --------------------------------------------------
-    def _check(self, state: NodeState):
-        node_name = "check"
-
-        too_short = len(state["answer"]) < 30
-        give_up = state["attempts"] >= 3
-        decision = "retry" if (too_short and not give_up) else "ok"
-
-        yield {
-            "type": "log",
-            "node": node_name,
-            "content": (
-                f"len={len(state['answer'])} attempts={state['attempts']}"
-                f" -> {decision}"
-            ),
-        }
-        return {"decision": decision}
-
-
-# ---------------------------------------------------------------------------
-# メインプログラム
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # 1. エージェントを構築
-    LLM_PATH = "mlx-community/Qwen3.6-27B-4bit"
-    llm = MlxLLM(model_path=LLM_PATH)
-    agent = QAAgent(llm=llm)
-
-    # 2. 入力
-    question = "地球の半径は何 km?"
-    print(f"Request: {question}\n")
-
-    # 3. 実行(ストリーミングを受け取り、イベント種別ごとに表示先を変える)
-    for event in agent.run(question=question):
-
-        # LLM 出力のチャンク
-        if event["type"] == "answer_text":
-            print(event["content"], end="", flush=True)
-
-        # ログ
-        elif event["type"] == "log":
-            print(f"\n[LOG] {event['node']}: {event['content']}")
-
-        # ノード内例外(ライブラリが自動で yield する)
-        elif event["type"] == "error":
-            print(f"\n[ERROR] {event['agent']}: {event['content']}")
-
-    print("\n\nProcess Completed.")
+            yield {"type": "answer_text", "node": "answer", "content": chunk}
+        return {"answer": text}
 ```
 
-このサンプルで示しているパターン:
+このパターンの要点:
 
 - **依存注入**: LLM は外側で生成してエージェントへ渡す。テスト時のモック化や LLM 実装の差し替えがしやすい
 - **エージェントの境界**: グラフとノード関数をひとつのクラスに集約し、外側からは `agent.run(...)` だけで呼べる
 - **`build_graph()` の分離**: グラフ構築を専用メソッドにすることで、テスト・可視化・サブグラフ化が容易
-- **`run()` の責務**: initial state の生成と `yield from graph.run(...)` による中継だけに留め、各ノードの処理は private メソッドに任せる
-- **イベントの規約**: `type` で種別を分け(`log` / `answer_text` / `error` 等)、`node` キーに発火元を入れる
-- **`__errors__` は触らない**: ノードで例外が起きるとライブラリが自動で `{"type": "error", "agent": ..., "content": ...}` を流す
-- **リトライの上限はドメイン側**: `attempts >= 3` で `decision="ok"` にして抜ける。`max_steps` はライブラリ側のセーフティネット
+- **イベントの規約**: `type` で種別を分け（`log` / `answer_text` / `error` 等）、`node` キーに発火元を入れる
+
+## GUI（ノードエディタ）
+
+ブラウザ上でノードを繋いでエージェントを no-code で構築できる GUI を同梱しています。
+FastAPI + Drawflow.js ベースで、ローカルで開発用に動かす想定です。
+
+### インストール
+
+```bash
+uv add 'llm-graph-kit[gui]'
+# または
+pip install 'llm-graph-kit[gui]'
+```
+
+### 起動
+
+```bash
+# CLI から
+python -m llm_graph_kit.gui
+# ホスト/ポート指定
+python -m llm_graph_kit.gui --host 127.0.0.1 --port 8000
+```
+
+または Python から:
+
+```python
+from llm_graph_kit import launch_gui
+launch_gui(host="127.0.0.1", port=8000)
+```
+
+`http://127.0.0.1:8000/` をブラウザで開くと、以下の操作ができます。
+
+- **+ Function / + Conditional**: 通常ノード・条件分岐ノードを追加
+- ノードクリック → 右パネルで `name` / Python コード / condition / 出力 signal を編集
+- ノード同士の出力ポート → 入力ポートをドラッグで **エッジを接続**
+- 左パネルで **State Schema** (TypedDict) と **Initial State** (JSON) を編集
+- **▶ Run**: グラフを実行し、`yield` されたイベントを下部にリアルタイム表示（SSE）
+- **Mermaid**: 現在のグラフを Mermaid テキストで表示
+- **Python Code**: 現在のグラフを実行可能な Python ソースとして出力
+- **Save / Load**: グラフ仕様を JSON ファイルに保存・復元
+
+### セキュリティ上の注意
+
+GUI はユーザーが入力した Python コードを `exec` で評価します。
+**信頼できないネットワークに公開してはいけません**。デフォルトの bind 先は
+`127.0.0.1` で、外部からはアクセスできない設定になっています。
 
 ## ライセンス / リポジトリ
-https://github.com/ToPo-ToPo-ToPo/llm_graph
+https://github.com/ToPo-ToPo-ToPo/llm-graph-kit

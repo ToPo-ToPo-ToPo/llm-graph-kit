@@ -1,15 +1,19 @@
 [project]
 name = "llm-graph-kit"
 version = "1.1.1"
-description = "Add your description here"
+description = "LLM ベースのエージェントのワークフローをグラフ形式で記述・実行する軽量ライブラリ"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = [
-    "augllm>=2.2.2",
-]
+dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/ToPo-ToPo-ToPo/llm_graph"
+Homepage = "https://github.com/ToPo-ToPo-ToPo/llm-graph-kit"
+
+[project.optional-dependencies]
+gui = [
+    "fastapi>=0.136.1",
+    "uvicorn>=0.47.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.21,<0.12"]
