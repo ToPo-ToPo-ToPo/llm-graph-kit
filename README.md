@@ -20,12 +20,18 @@ uv add llm-graph-kit
 
 ライブラリ本体 (`llm_graph_kit`) は標準ライブラリのみで動作し、追加の依存はありません。
 
+GUI（ノードエディタ）を使う場合は `gui` エクストラを追加します（詳細は [GUI の章](#gui%E3%83%8E%E3%83%BC%E3%83%89%E3%82%A8%E3%83%87%E3%82%A3%E3%82%BF) を参照）:
+
+```bash
+uv add 'llm-graph-kit[gui]'
+```
+
 開発する場合:
 
 ```bash
 uv venv
 source .venv/bin/activate
-uv sync
+uv sync --extra gui
 ```
 
 ## クイックスタート
@@ -215,7 +221,7 @@ def my_node(state: NodeState):
 - 各ノードの戻り値 dict は `state.update(...)` で既存 state にマージされます（同名キーは上書き）
 - `__errors__` は予約キー。`initial_state` でもノード戻り値でも書き込めません（読み取りは自由）
 
-## サンプル 1: シンプルなカウンタ（LLM 非依存）
+## サンプル: シンプルなカウンタ（LLM 非依存）
 
 リポジトリの [`example_with_schema.py`](./example_with_schema.py) と同じものです。3 回ループしてから終端ノードに進むグラフです。
 
@@ -333,6 +339,51 @@ if __name__ == "__main__":
   final_message: completed after 3 ticks
 ```
 
+## LLM と組み合わせるときの推奨パターン
+
+本ライブラリは特定の LLM ライブラリに依存しません。任意の LLM クライアントを**依存注入**でエージェントに渡し、ストリーミングチャンクを `yield` で呼び出し側へ流すのが推奨構成です。
+
+```python
+from typing import TypedDict
+from llm_graph_kit import LLMGraph, NodeState
+
+
+class QAState(TypedDict, total=False):
+    question: str
+    answer: str
+
+
+class QAAgent:
+    def __init__(self, llm) -> None:
+        self.llm = llm            # LLM クライアントは外側で生成して注入する
+
+    def run(self, question: str):
+        graph = self.build_graph()
+        yield from graph.run({"question": question})
+
+    def build_graph(self) -> LLMGraph:
+        g = LLMGraph(state_schema=QAState)
+        g.add_node("answer", self._answer)
+        g.add_edge(LLMGraph.START, "answer")
+        g.add_edge("answer", LLMGraph.END)
+        return g
+
+    def _answer(self, state: NodeState):
+        text = ""
+        # お使いの LLM クライアントのストリーミング API に置き換えてください
+        for chunk in self.llm.stream(state["question"]):
+            text += chunk
+            yield {"type": "answer_text", "node": "answer", "content": chunk}
+        return {"answer": text}
+```
+
+このパターンの要点:
+
+- **依存注入**: LLM は外側で生成してエージェントへ渡す。テスト時のモック化や LLM 実装の差し替えがしやすい
+- **エージェントの境界**: グラフとノード関数をひとつのクラスに集約し、外側からは `agent.run(...)` だけで呼べる
+- **`build_graph()` の分離**: グラフ構築を専用メソッドにすることで、テスト・可視化・サブグラフ化が容易
+- **イベントの規約**: `type` で種別を分け（`log` / `answer_text` / `error` 等）、`node` キーに発火元を入れる
+
 ## GUI（ノードエディタ）
 
 ブラウザ上でノードを繋いでエージェントを no-code で構築できる GUI を同梱しています。
@@ -380,4 +431,4 @@ GUI はユーザーが入力した Python コードを `exec` で評価します
 `127.0.0.1` で、外部からはアクセスできない設定になっています。
 
 ## ライセンス / リポジトリ
-https://github.com/ToPo-ToPo-ToPo/llm_graph
+https://github.com/ToPo-ToPo-ToPo/llm-graph-kit
