@@ -9,6 +9,12 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/ToPo-ToPo-ToPo/llm_graph"
 
+[project.optional-dependencies]
+gui = [
+    "fastapi>=0.136.1",
+    "uvicorn>=0.47.0",
+]
+
 [build-system]
 requires = ["uv_build>=0.9.21,<0.12"]
 build-backend = "uv_build"
