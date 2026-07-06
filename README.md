@@ -53,6 +53,14 @@ python tests/test_codegen.py        # 個別ファイルを直接実行
 | `tests/test_codegen.py` | GUI 仕様 → Python コード生成（`gui/codegen.py`） |
 | `tests/test_server.py` | GUI サーバーのヘルパー（`gui/server.py`、fastapi 未導入なら自動スキップ） |
 
+各チェックの「何を確認し、何を入力し、期待値と実測値がどうだったか」を
+1 件ずつ日本語で表示する**読みやすい版**もあります（学習・デモ向け）。
+
+```bash
+python tests/demo_llm_graph.py            # 結果を 1 件ずつ表示
+python tests/demo_llm_graph.py --no-color # 色なし（ログ保存時など）
+```
+
 ## クイックスタート
 
 ```python
