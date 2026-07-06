@@ -61,6 +61,15 @@ python tests/demo_llm_graph.py            # 結果を 1 件ずつ表示
 python tests/demo_llm_graph.py --no-color # 色なし（ログ保存時など）
 ```
 
+LLM を使ったエージェントが**自然言語をストリーミング表示**する様子を見たい場合は
+`tests/demo_llm_agent.py` を実行します。追加インストール不要で動くよう**モック LLM を
+内蔵**しており（実 LLM は依存注入で差し替え可能）、回答→チェック→リトライの
+ループが流れる様子を確認できます。
+
+```bash
+python tests/demo_llm_agent.py
+```
+
 ## クイックスタート
 
 ```python
