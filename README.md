@@ -17,12 +17,20 @@ LLM ベースのエージェントの動作内容を**グラフ形式**で記述
 uv add llm-graph-kit
 ```
 
+ライブラリ本体 (`llm_graph_kit`) は標準ライブラリのみで動作し、追加の依存はありません。
+
+LLM を使うサンプル ([`example_with_llm.py`](./example_with_llm.py)、[`test_novelist.py`](./test_novelist.py)) を実行する場合は、`llm` エクストラを追加してください:
+
+```bash
+uv add "llm-graph-kit[llm]"
+```
+
 開発する場合:
 
 ```bash
 uv venv
 source .venv/bin/activate
-uv sync
+uv sync --extra llm
 ```
 
 ## クイックスタート
