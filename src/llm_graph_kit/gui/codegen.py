@@ -95,9 +95,13 @@ def generate_python_code(spec: Dict[str, Any]) -> str:
             # function 名はユーザーコードに含まれる識別子。code 内の def 名を取得。
             func_ref = name
             if n["kind"] == "conditional" and not n.get("code", "").strip():
-                # passthrough lambda を生成
-                func_ref = f"lambda state: None  # passthrough for '{name}'"
-                lines.append(f"    g.add_node({name!r}, {func_ref})")
+                # 本体コードのない conditional は素通しの passthrough を登録する。
+                # コメントは add_node(...) の外側に置く（式の途中に # を挟むと
+                # 閉じ括弧がコメントに飲まれて SyntaxError になる）。
+                func_ref = "lambda state: None"
+                lines.append(
+                    f"    g.add_node({name!r}, {func_ref})  # passthrough for {name!r}"
+                )
             else:
                 lines.append(f"    g.add_node({name!r}, {func_ref})")
     lines.append("")

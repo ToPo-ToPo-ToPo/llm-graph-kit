@@ -34,6 +34,46 @@ source .venv/bin/activate
 uv sync --extra gui
 ```
 
+## テスト
+
+テストとデモは `tests/` にまとめてあり、**pytest は不要**です（標準ライブラリの
+`unittest` のみで動作し、追加インストールは要りません）。
+
+### 自動テスト（合否判定）
+
+リポジトリ直下のランナーですべての `test_*.py` を実行します。
+
+```bash
+python run_tests.py                 # 全テストを実行
+python run_tests.py -v              # 各テスト名も表示
+python run_tests.py test_builder    # 特定モジュールだけ実行
+python tests/test_codegen.py        # 個別ファイルを直接実行
+```
+
+| ファイル | 対象 |
+| --- | --- |
+| `tests/test_llm_graph.py` | `LLMGraph` 本体（構築・実行・条件分岐・スキーマ・Mermaid） |
+| `tests/test_builder.py` | GUI 仕様 → `LLMGraph` 変換（`gui/builder.py`） |
+| `tests/test_codegen.py` | GUI 仕様 → Python コード生成（`gui/codegen.py`） |
+| `tests/test_server.py` | GUI サーバーのヘルパー（`gui/server.py`、fastapi 未導入なら自動スキップ） |
+
+### デモスクリプト（挙動を目で確認）
+
+`test_*.py` 以外に、実行すると挙動が読みやすく表示されるスクリプトもあります
+（ランナーの検出対象外なので自動テストには含まれません）。それぞれ単体で実行します。
+
+| ファイル | 内容 |
+| --- | --- |
+| `tests/demo_llm_graph.py` | 各チェックの「確認内容・入力・期待値・実測値・合否」を 1 件ずつ日本語表示 |
+| `tests/demo_llm_agent.py` | LLM エージェントが**自然言語をストリーミング表示**（モック LLM 内蔵・実 LLM は依存注入で差し替え可） |
+
+```bash
+python tests/demo_llm_graph.py            # 結果を 1 件ずつ表示
+python tests/demo_llm_graph.py --no-color # 色なし（ログ保存時など）
+
+python tests/demo_llm_agent.py            # 回答→チェック→リトライの流れを逐次表示
+```
+
 ## クイックスタート
 
 ```python

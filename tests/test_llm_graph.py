@@ -2,14 +2,18 @@
 LLMGraph 本体の動作確認用テスト（LLM 非依存）。
 
 実行方法:
-    python -m unittest test_llm_graph
-    # または
-    python test_llm_graph.py
+    python tests/test_llm_graph.py        # 単体で実行
+    python run_tests.py                    # 全テストをまとめて実行
 """
+import os
+import sys
 import unittest
 import warnings
 from enum import Enum
 from typing import TypedDict, Optional
+
+# tests/ から実行してもリポジトリ直下の `src` パッケージを解決できるようにする
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.llm_graph_kit import LLMGraph, NodeState
 
